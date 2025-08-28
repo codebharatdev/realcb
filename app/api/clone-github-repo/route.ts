@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { getFirebaseForAPI } from '@/lib/firebase-utils';
 
 declare global {
   var activeSandbox: any;
@@ -27,8 +26,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Get user's GitHub access token
-    const userRef = doc(db, 'users', userId);
-    const userDoc = await getDoc(userRef);
+    const { db, firestore } = getFirebaseForAPI();
+    
+    if (!db || !firestore) {
+      return NextResponse.json({
+        success: false,
+        error: 'Firebase not configured'
+      }, { status: 500 });
+    }
+
+    const userRef = firestore.doc(db, 'users', userId);
+    const userDoc = await firestore.getDoc(userRef);
     
     if (!userDoc.exists()) {
       return NextResponse.json({
