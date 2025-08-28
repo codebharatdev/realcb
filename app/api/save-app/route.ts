@@ -27,8 +27,17 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
       
-      // Save app to Firestore
-      const appDoc = await addDoc(collection(db, 'apps'), {
+             const { db, firestore } = getFirebaseForAPI();
+       
+       if (!db || !firestore) {
+         return NextResponse.json({
+           success: false,
+           error: 'Firebase not configured'
+         }, { status: 500 });
+       }
+       
+       // Save app to Firestore
+       const appDoc = await firestore.addDoc(firestore.collection(db, 'apps'), {
         userId,
         name,
         description: description || '',
@@ -61,9 +70,18 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
       
-      // Update app in Firestore
-      const appRef = doc(db, 'apps', appId);
-      await updateDoc(appRef, {
+             const { db, firestore } = getFirebaseForAPI();
+       
+       if (!db || !firestore) {
+         return NextResponse.json({
+           success: false,
+           error: 'Firebase not configured'
+         }, { status: 500 });
+       }
+       
+       // Update app in Firestore
+       const appRef = firestore.doc(db, 'apps', appId);
+       await firestore.updateDoc(appRef, {
         ...updates,
         updatedAt: new Date()
       });
@@ -83,9 +101,18 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
       
-      // Delete app from Firestore
-      const appRef = doc(db, 'apps', appId);
-      await deleteDoc(appRef);
+             const { db, firestore } = getFirebaseForAPI();
+       
+       if (!db || !firestore) {
+         return NextResponse.json({
+           success: false,
+           error: 'Firebase not configured'
+         }, { status: 500 });
+       }
+       
+       // Delete app from Firestore
+       const appRef = firestore.doc(db, 'apps', appId);
+       await firestore.deleteDoc(appRef);
       
       return NextResponse.json({
         success: true,
@@ -102,14 +129,23 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
       
-      try {
-        // Remove GitHub connection from user's document
-        const userRef = doc(db, 'users', userId);
-        const userDoc = await getDoc(userRef);
+             try {
+         const { db, firestore } = getFirebaseForAPI();
+         
+         if (!db || !firestore) {
+           return NextResponse.json({
+             success: false,
+             error: 'Firebase not configured'
+           }, { status: 500 });
+         }
+         
+         // Remove GitHub connection from user's document
+         const userRef = firestore.doc(db, 'users', userId);
+         const userDoc = await firestore.getDoc(userRef);
         
-        if (!userDoc.exists()) {
-          // If user document doesn't exist, create it with disconnected state
-          await setDoc(userRef, {
+                 if (!userDoc.exists()) {
+           // If user document doesn't exist, create it with disconnected state
+           await firestore.setDoc(userRef, {
             githubAccessToken: null,
             githubUsername: null,
             githubUserId: null,
@@ -117,9 +153,9 @@ export async function POST(request: NextRequest) {
             createdAt: new Date(),
             updatedAt: new Date()
           });
-        } else {
-          // Update existing user document
-          await updateDoc(userRef, {
+                 } else {
+           // Update existing user document
+           await firestore.updateDoc(userRef, {
             githubAccessToken: null,
             githubUsername: null,
             githubUserId: null,
@@ -162,10 +198,19 @@ export async function GET(request: NextRequest) {
     const userId = searchParams.get('userId');
     const appId = searchParams.get('appId');
     
-    if (appId) {
-      // Get specific app
-      const appRef = doc(db, 'apps', appId);
-      const appSnap = await getDoc(appRef);
+         const { db, firestore } = getFirebaseForAPI();
+     
+     if (!db || !firestore) {
+       return NextResponse.json({
+         success: false,
+         error: 'Firebase not configured'
+       }, { status: 500 });
+     }
+     
+     if (appId) {
+       // Get specific app
+       const appRef = firestore.doc(db, 'apps', appId);
+       const appSnap = await firestore.getDoc(appRef);
       
       if (!appSnap.exists()) {
         return NextResponse.json({
@@ -179,14 +224,14 @@ export async function GET(request: NextRequest) {
         app: { id: appSnap.id, ...appSnap.data() }
       });
       
-         } else if (userId) {
-       // Get user's apps (without orderBy to avoid index requirement)
-       const appsQuery = query(
-         collection(db, 'apps'),
-         where('userId', '==', userId)
-       );
-       
-       const querySnapshot = await getDocs(appsQuery);
+                   } else if (userId) {
+        // Get user's apps (without orderBy to avoid index requirement)
+        const appsQuery = firestore.query(
+          firestore.collection(db, 'apps'),
+          firestore.where('userId', '==', userId)
+        );
+        
+        const querySnapshot = await firestore.getDocs(appsQuery);
        const apps = querySnapshot.docs.map(doc => ({
          id: doc.id,
          ...doc.data()

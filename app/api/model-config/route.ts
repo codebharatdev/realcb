@@ -1,15 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { getFirebaseForAPI } from '@/lib/firebase-utils';
 
 // Default model from environment variable
 const DEFAULT_MODEL = process.env.DEFAULT_AI_MODEL || 'moonshotai/kimi-k2-instruct';
 
 export async function GET() {
   try {
+    const { db, firestore } = getFirebaseForAPI();
+    
+    if (!db || !firestore) {
+      return NextResponse.json({
+        success: true,
+        activeModel: DEFAULT_MODEL,
+        availableModels: [
+          'moonshotai/kimi-k2-instruct',
+          'openai/gpt-5',
+          'anthropic/claude-sonnet-4-20250514',
+          'google/gemini-2.5-pro'
+        ]
+      });
+    }
+    
     // Try to get model from database first
-    const configRef = doc(db, 'config', 'ai-model');
-    const configSnap = await getDoc(configRef);
+    const configRef = firestore.doc(db, 'config', 'ai-model');
+    const configSnap = await firestore.getDoc(configRef);
     
     let activeModel = DEFAULT_MODEL;
     
@@ -18,7 +32,7 @@ export async function GET() {
       activeModel = config.activeModel || DEFAULT_MODEL;
     } else {
       // Initialize with default model if no config exists
-      await setDoc(configRef, {
+      await firestore.setDoc(configRef, {
         activeModel: DEFAULT_MODEL,
         updatedAt: new Date(),
         updatedBy: 'system'
@@ -70,9 +84,18 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
     
+    const { db, firestore } = getFirebaseForAPI();
+    
+    if (!db || !firestore) {
+      return NextResponse.json({
+        success: false,
+        error: 'Firebase not configured'
+      }, { status: 500 });
+    }
+    
     // Update model in database
-    const configRef = doc(db, 'config', 'ai-model');
-    await setDoc(configRef, {
+    const configRef = firestore.doc(db, 'config', 'ai-model');
+    await firestore.setDoc(configRef, {
       activeModel,
       updatedAt: new Date(),
       updatedBy

@@ -61,9 +61,15 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}?github_error=user_fetch_failed`);
     }
 
-    // Store the GitHub access token and user info in Firestore
-    const userRef = doc(db, 'users', state);
-    await setDoc(userRef, {
+         const { db, firestore } = getFirebaseForAPI();
+     
+     if (!db || !firestore) {
+       return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}?github_error=firebase_not_configured`);
+     }
+     
+     // Store the GitHub access token and user info in Firestore
+     const userRef = firestore.doc(db, 'users', state);
+     await firestore.setDoc(userRef, {
       githubAccessToken: accessToken,
       githubUsername: userData.login,
       githubUserId: userData.id,

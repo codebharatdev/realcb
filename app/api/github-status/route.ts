@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { getFirebaseForAPI } from '@/lib/firebase-utils';
 
 export async function GET(request: NextRequest) {
   try {
@@ -15,8 +14,17 @@ export async function GET(request: NextRequest) {
     }
 
     // Check if user has connected their GitHub account
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
+    const { db, firestore } = getFirebaseForAPI();
+    
+    if (!db || !firestore) {
+      return NextResponse.json({
+        success: false,
+        error: 'Firebase not configured'
+      }, { status: 500 });
+    }
+    
+    const userRef = firestore.doc(db, 'users', userId);
+    const userSnap = await firestore.getDoc(userRef);
 
     if (!userSnap.exists()) {
       return NextResponse.json({
