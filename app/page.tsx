@@ -1049,6 +1049,9 @@ export default function AISandboxPage() {
   };
 
   const createSandbox = async (fromHomeScreen = false) => {
+    let attempts = 0;
+    const maxAttempts = 3;
+    
     try {
       console.log('[createSandbox] Starting sandbox creation...');
       setLoading(true);
@@ -1057,45 +1060,45 @@ export default function AISandboxPage() {
       setResponseArea([]);
       setScreenshotError(null);
     
-    try {
-      const response = await fetch('/api/create-ai-sandbox', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({})
-      });
-      
-      const data = await response.json();
-      console.log('[createSandbox] Response data:', data);
-      
-      if (data.success) {
-        setSandboxData(data);
-        updateStatus('Sandbox active', true);
-        log('Sandbox created successfully!');
-        log(`Sandbox ID: ${data.sandboxId}`);
-        log(`URL: ${data.url}`);
+      while (attempts < maxAttempts) {
+        attempts++;
         
-        // Update URL with sandbox ID (optional - for debugging and session persistence)
-        // const newParams = new URLSearchParams(searchParams.toString());
-        // newParams.set('sandbox', data.sandboxId);
-        // newParams.set('model', aiModel);
-        // router.push(`/?${newParams.toString()}`, { scroll: false });
-        
-        // Fade out loading background after sandbox loads
-        setTimeout(() => {
-          setShowLoadingBackground(false);
-        }, 3000);
-        
-        if (data.structure) {
-          displayStructure(data.structure);
-        }
-        
-        // Fetch sandbox files after creation
-        setTimeout(fetchSandboxFiles, 1000);
-        
-        // If we have loaded files, apply them to the new sandbox
-        if (currentSandboxFiles && Object.keys(currentSandboxFiles).length > 0) {
-          setTimeout(async () => {
-            try {
+        try {
+          console.log(`[createSandbox] Attempt ${attempts}/${maxAttempts}...`);
+          updateStatus(`Creating sandbox... (Attempt ${attempts}/${maxAttempts})`, false);
+          
+          const response = await fetch('/api/create-ai-sandbox', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({})
+          });
+          
+          const data = await response.json();
+          console.log('[createSandbox] Response data:', data);
+          
+          if (data.success) {
+            setSandboxData(data);
+            updateStatus('Sandbox active', true);
+            log('Sandbox created successfully!');
+            log(`Sandbox ID: ${data.sandboxId}`);
+            log(`URL: ${data.url}`);
+            
+            // Fade out loading background after sandbox loads
+            setTimeout(() => {
+              setShowLoadingBackground(false);
+            }, 3000);
+            
+            if (data.structure) {
+              displayStructure(data.structure);
+            }
+            
+            // Fetch sandbox files after creation
+            setTimeout(fetchSandboxFiles, 1000);
+            
+                         // If we have loaded files, apply them to the new sandbox
+             if (currentSandboxFiles && Object.keys(currentSandboxFiles).length > 0) {
+               setTimeout(async () => {
+                 try {
               console.log('[createSandbox] Applying loaded files to new sandbox');
               const applyResponse = await fetch('/api/apply-ai-code', {
                 method: 'POST',
@@ -1311,24 +1314,91 @@ Tip: I automatically detect and install npm packages from your code imports (lik
             iframeRef.current.src = data.url;
           }
         }, 100);
+        
+        return; // Success, exit the retry loop
       } else {
-        throw new Error(data.error || 'Unknown error');
+        console.error('[createSandbox] Sandbox creation failed:', data.error);
+        log(`❌ Sandbox creation failed: ${data.error}`);
+        
+        if (data.suggestions) {
+          log('💡 Suggestions:');
+          data.suggestions.forEach((suggestion: string) => {
+            log(`   • ${suggestion}`);
+          });
+        }
       }
-    } catch (error: any) {
-      console.error('[createSandbox] Error:', error);
-      updateStatus('Error', false);
-      log(`Failed to create sandbox: ${error.message}`, 'error');
-      addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
-    } finally {
-      setLoading(false);
+    } catch (error) {
+      console.error(`[createSandbox] Attempt ${attempts} failed:`, error);
+      log(`❌ Attempt ${attempts} failed: ${(error as Error).message}`);
     }
-  } catch (error: any) {
-    console.error('[createSandbox] Outer error:', error);
-    updateStatus('Error', false);
-    log(`Failed to create sandbox: ${error.message}`, 'error');
-    addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
-    setLoading(false);
+    
+    if (attempts < maxAttempts) {
+      const delay = Math.min(2000 * Math.pow(2, attempts - 1), 10000); // Exponential backoff
+      log(`⏳ Retrying in ${delay/1000}s... (${attempts}/${maxAttempts})`);
+      await new Promise(resolve => setTimeout(resolve, delay));
+    }
   }
+  
+  // All attempts failed - try fallback
+  log('❌ All E2B sandbox attempts failed, trying fallback...');
+  updateStatus('Trying fallback environment...', false);
+  
+  try {
+    const fallbackResponse = await fetch('/api/sandbox-fallback', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({})
+    });
+    
+    const fallbackData = await fallbackResponse.json();
+    
+    if (fallbackData.success) {
+      setSandboxData(fallbackData);
+      updateStatus('Fallback environment active', true);
+      log('✅ Fallback development environment created!');
+      log(`Fallback ID: ${fallbackData.fallbackId}`);
+      log('⚠️ Note: This is a simplified environment with limitations');
+      
+      if (fallbackData.limitations) {
+        log('📋 Limitations:');
+        fallbackData.limitations.forEach((limitation: string) => {
+          log(`   • ${limitation}`);
+        });
+      }
+      
+      // Fade out loading background
+      setTimeout(() => {
+        setShowLoadingBackground(false);
+      }, 3000);
+      
+      setTimeout(() => {
+        if (iframeRef.current) {
+          iframeRef.current.src = fallbackData.url;
+        }
+      }, 100);
+      
+      return; // Success with fallback
+    } else {
+      throw new Error(fallbackData.error || 'Fallback creation failed');
+    }
+  } catch (fallbackError) {
+    console.error('[createSandbox] Fallback also failed:', fallbackError);
+    log(`❌ Fallback environment also failed: ${(fallbackError as Error).message}`);
+  }
+  
+  // Everything failed
+  log('❌ All sandbox creation attempts failed');
+  updateStatus('Sandbox creation failed', false);
+  setLoading(false);
+  setShowLoadingBackground(false);
+  
+} catch (error) {
+  console.error('[createSandbox] Unexpected error:', error);
+  log(`❌ Unexpected error: ${(error as Error).message}`);
+  updateStatus('Sandbox creation failed', false);
+  setLoading(false);
+  setShowLoadingBackground(false);
+}
 };
 
   const displayStructure = (structure: any) => {
