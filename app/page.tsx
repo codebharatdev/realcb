@@ -2446,6 +2446,13 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       return null;
     }
 
+    // Clean up any old repositories from previous failed attempts (older than 1 hour)
+    try {
+      await cleanupOldRepositories();
+    } catch (cleanupError) {
+      console.log('[createGitHubRepoForGeneration] Cleanup failed, continuing...', cleanupError);
+    }
+
     try {
       // Generate initial repository name with CodeBharat.dev prefix, timestamp, and random suffix
       let repoName = '';
@@ -2467,6 +2474,19 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         const currentRepoName = `codebharat-dev-app-${currentTimestamp}-${currentRandomSuffix}`;
         
         console.log(`[createGitHubRepoForGeneration] Attempt ${attempts}/${maxAttempts} with repo name:`, currentRepoName);
+        
+        // First, check if the repository already exists
+        try {
+          const checkResponse = await fetch(`/api/github-check-repo?repoName=${currentRepoName}&userId=${user.uid}`);
+          const checkData = await checkResponse.json();
+          
+          if (checkData.exists) {
+            console.log(`[createGitHubRepoForGeneration] Repository ${currentRepoName} already exists, trying next name...`);
+            continue;
+          }
+        } catch (checkError) {
+          console.log(`[createGitHubRepoForGeneration] Could not check repository existence, proceeding with creation...`);
+        }
         
         response = await fetch('/api/github-commit', {
           method: 'POST',
@@ -2530,6 +2550,35 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       console.error('[createGitHubRepoForGeneration] Error:', error);
       addChatMessage(`⚠️ Failed to create GitHub repository: Network error`, 'error');
       return null;
+    }
+  };
+
+  const cleanupOldRepositories = async () => {
+    if (!user || !githubConnected) return;
+
+    try {
+      console.log('[cleanupOldRepositories] Starting cleanup of old repositories...');
+      
+      const response = await fetch('/api/github-cleanup-repos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          userId: user.uid,
+          maxAge: 60 * 60 * 1000 // 1 hour in milliseconds
+        }),
+      });
+
+      const data = await response.json();
+      
+      if (response.ok && data.success) {
+        console.log('[cleanupOldRepositories] Cleanup completed:', data.cleanedCount, 'repositories removed');
+      } else {
+        console.log('[cleanupOldRepositories] Cleanup failed:', data.error);
+      }
+    } catch (error) {
+      console.error('[cleanupOldRepositories] Error:', error);
     }
   };
 
