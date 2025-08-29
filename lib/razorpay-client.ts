@@ -24,9 +24,15 @@ export interface RazorpayPayment {
 
 export class RazorpayClient {
   private static instance: RazorpayClient;
-  private client: Razorpay;
+  private client: Razorpay | null = null;
 
   private constructor() {
+    // Don't initialize during build time
+  }
+
+  private async initializeClient() {
+    if (this.client) return;
+
     const keyId = process.env.RAZORPAY_KEY_ID;
     const keySecret = process.env.RAZORPAY_KEY_SECRET;
 
@@ -34,8 +40,6 @@ export class RazorpayClient {
       console.error('Razorpay credentials not configured');
       throw new Error('Razorpay credentials not configured');
     }
-
-
 
     try {
       this.client = new Razorpay({
@@ -56,8 +60,10 @@ export class RazorpayClient {
   }
 
   async createOrder(amount: number, receipt: string, notes?: Record<string, string>): Promise<RazorpayOrder> {
+    await this.initializeClient();
+    
     try {
-      const order = await this.client.orders.create({
+      const order = await this.client!.orders.create({
         amount: amount * 100, // Convert to paise
         currency: 'INR',
         receipt,
@@ -88,8 +94,10 @@ export class RazorpayClient {
   }
 
   async getPaymentDetails(paymentId: string): Promise<RazorpayPayment> {
+    await this.initializeClient();
+    
     try {
-      const payment = await this.client.payments.fetch(paymentId);
+      const payment = await this.client!.payments.fetch(paymentId);
       return payment as RazorpayPayment;
     } catch (error) {
       console.error('Error fetching payment details:', error);
@@ -98,8 +106,10 @@ export class RazorpayClient {
   }
 
   async getOrderDetails(orderId: string): Promise<RazorpayOrder> {
+    await this.initializeClient();
+    
     try {
-      const order = await this.client.orders.fetch(orderId);
+      const order = await this.client!.orders.fetch(orderId);
       return order as RazorpayOrder;
     } catch (error) {
       console.error('Error fetching order details:', error);
