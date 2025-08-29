@@ -4,16 +4,16 @@
 let firebaseDb: any = null;
 let firestoreFunctions: any = null;
 
-export function getFirebaseForAPI() {
+export async function getFirebaseForAPI() {
   if (!process.env.NEXT_PUBLIC_FIREBASE_API_KEY) {
     return { db: null, firestore: null };
   }
 
   if (!firebaseDb) {
     try {
-      // Import Firebase modules directly
-      const { initializeApp, getApps } = require('firebase/app');
-      const { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, getDocs, query, where, orderBy, limit } = require('firebase/firestore');
+      // Import Firebase modules dynamically
+      const { initializeApp, getApps } = await import('firebase/app');
+      const { getFirestore, doc, getDoc, setDoc, updateDoc, deleteDoc, collection, addDoc, getDocs, query, where, orderBy, limit } = await import('firebase/firestore');
       
       // Initialize Firebase if not already done
       const firebaseConfig = {
