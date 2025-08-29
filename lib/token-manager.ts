@@ -67,7 +67,7 @@ export class TokenManager {
   }
 
   async getUserTokenBalance(userId: string): Promise<TokenBalance | null> {
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       throw new Error('Firebase not configured');
@@ -111,7 +111,7 @@ export class TokenManager {
   }
 
   async consumeTokens(userId: string, amount: number, description: string): Promise<boolean> {
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       throw new Error('Firebase not configured');
@@ -158,7 +158,7 @@ export class TokenManager {
   }
 
   async addTokens(userId: string, amount: number, paymentId?: string, description?: string): Promise<void> {
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       throw new Error('Firebase not configured');
@@ -206,7 +206,7 @@ export class TokenManager {
   }
 
   async getTokenTransactions(userId: string, limit: number = 10): Promise<TokenTransaction[]> {
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       throw new Error('Firebase not configured');
@@ -256,7 +256,7 @@ export class TokenManager {
 
   // Adjust token consumption based on actual usage
   async adjustTokenConsumption(userId: string, estimatedTokens: number, actualTokens: number, description: string): Promise<boolean> {
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       throw new Error('Firebase not configured');

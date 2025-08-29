@@ -13,7 +13,7 @@ export async function GET(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     if (!db || !firestore) {
       return NextResponse.json({
         success: false,
@@ -69,7 +69,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     if (!db || !firestore) {
       return NextResponse.json({
         success: false,

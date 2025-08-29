@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
       }, { status: 401 });
     }
 
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       return NextResponse.json({

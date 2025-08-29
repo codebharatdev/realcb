@@ -14,7 +14,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Check if user has connected their GitHub account
-         const { db, firestore } = getFirebaseForAPI();
+         const { db, firestore } = await getFirebaseForAPI();
      
      if (!db || !firestore) {
        return NextResponse.json({

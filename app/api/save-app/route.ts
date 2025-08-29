@@ -28,7 +28,7 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
       
-             const { db, firestore } = getFirebaseForAPI();
+             const { db, firestore } = await getFirebaseForAPI();
        
        if (!db || !firestore) {
          return NextResponse.json({
@@ -72,7 +72,7 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
       
-             const { db, firestore } = getFirebaseForAPI();
+             const { db, firestore } = await getFirebaseForAPI();
        
        if (!db || !firestore) {
          return NextResponse.json({
@@ -103,7 +103,7 @@ export async function POST(request: NextRequest) {
         }, { status: 400 });
       }
       
-             const { db, firestore } = getFirebaseForAPI();
+             const { db, firestore } = await getFirebaseForAPI();
        
        if (!db || !firestore) {
          return NextResponse.json({
@@ -132,7 +132,7 @@ export async function POST(request: NextRequest) {
       }
       
              try {
-         const { db, firestore } = getFirebaseForAPI();
+         const { db, firestore } = await getFirebaseForAPI();
          
          if (!db || !firestore) {
            return NextResponse.json({
@@ -200,7 +200,7 @@ export async function GET(request: NextRequest) {
     const userId = searchParams.get('userId');
     const appId = searchParams.get('appId');
     
-         const { db, firestore } = getFirebaseForAPI();
+         const { db, firestore } = await getFirebaseForAPI();
      
      if (!db || !firestore) {
        return NextResponse.json({

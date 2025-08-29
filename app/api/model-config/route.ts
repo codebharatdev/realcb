@@ -6,7 +6,7 @@ const DEFAULT_MODEL = process.env.DEFAULT_AI_MODEL || 'moonshotai/kimi-k2-instru
 
 export async function GET() {
   try {
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       return NextResponse.json({
@@ -84,7 +84,7 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
     
-         const { db, firestore } = getFirebaseForAPI();
+         const { db, firestore } = await getFirebaseForAPI();
      
      if (!db || !firestore) {
        return NextResponse.json({

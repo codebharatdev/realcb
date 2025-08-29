@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Get user's GitHub access token
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
          if (!db || !firestore) {
        return NextResponse.json({

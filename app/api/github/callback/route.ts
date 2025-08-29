@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
       return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}?github_error=user_fetch_failed`);
     }
 
-         const { db, firestore } = getFirebaseForAPI();
+         const { db, firestore } = await getFirebaseForAPI();
      
      if (!db || !firestore) {
        return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}?github_error=not_configured`);

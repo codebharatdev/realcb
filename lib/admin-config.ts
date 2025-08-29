@@ -35,7 +35,7 @@ export class AdminConfigManager {
   }
 
   async getAdminConfig(): Promise<AdminConfig | null> {
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       throw new Error('Firebase not configured');
@@ -105,7 +105,7 @@ export class AdminConfigManager {
   }
 
   async updateAdminConfig(config: Partial<AdminConfig>, updatedBy: string): Promise<AdminConfig> {
-    const { db, firestore } = getFirebaseForAPI();
+    const { db, firestore } = await getFirebaseForAPI();
     
     if (!db || !firestore) {
       throw new Error('Firebase not configured');
