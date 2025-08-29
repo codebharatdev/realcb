@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
          const { db, firestore } = getFirebaseForAPI();
      
      if (!db || !firestore) {
-       return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}?github_error=firebase_not_configured`);
+       return NextResponse.redirect(`${process.env.NEXT_PUBLIC_APP_URL}?github_error=not_configured`);
      }
      
      // Store the GitHub access token and user info in Firestore

@@ -27,6 +27,10 @@ import { useAuth } from '@/lib/auth-context';
 import { LoginModal } from '@/components/LoginModal';
 import { UserProfile } from '@/components/UserProfile';
 import { ClientOnly } from '@/components/ClientOnly';
+import PaymentModal from '@/components/PaymentModal';
+import AccountMenu from '@/components/AccountMenu';
+import { tokenManager } from '@/lib/token-manager';
+
 
 interface SandboxData {
   sandboxId: string;
@@ -69,21 +73,22 @@ export default function AISandboxPage() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const [aiModel, setAiModel] = useState<string>('moonshotai/kimi-k2-instruct'); // Default, will be updated from backend
-  const [urlOverlayVisible, setUrlOverlayVisible] = useState(false);
-  const [urlInput, setUrlInput] = useState('');
-  const [urlStatus, setUrlStatus] = useState<string[]>([]);
+
   const [showHomeScreen, setShowHomeScreen] = useState(true);
   const [showPreview, setShowPreview] = useState(false);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set(['app', 'src', 'src/components']));
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [homeScreenFading, setHomeScreenFading] = useState(false);
-  const [homeUrlInput, setHomeUrlInput] = useState('');
-  const [homeContextInput, setHomeContextInput] = useState('');
+
   const [activeTab, setActiveTab] = useState<'generation' | 'preview'>('generation');
   const [currentSandboxFiles, setCurrentSandboxFiles] = useState<Record<string, string>>({});
-  const [showStyleSelector, setShowStyleSelector] = useState(false);
+
   const [showMyApps, setShowMyApps] = useState(false);
+  const [showCreditHistory, setShowCreditHistory] = useState(false);
+  const [creditHistory, setCreditHistory] = useState<Array<any>>([]);
   const [showGitHubModal, setShowGitHubModal] = useState(false);
+  const [myAppsSearchTerm, setMyAppsSearchTerm] = useState('');
+  const [myAppsFilter, setMyAppsFilter] = useState<'all' | 'recent' | 'github'>('all');
   const [selectedAppForGitHub, setSelectedAppForGitHub] = useState<string | null>(null);
   const [loadingAppId, setLoadingAppId] = useState<string | null>(null);
   const [loadingAppName, setLoadingAppName] = useState<string>('');
@@ -101,6 +106,63 @@ export default function AISandboxPage() {
   } | null>(null);
   const [currentGitHubRepo, setCurrentGitHubRepo] = useState<{name: string, url: string} | null>(null);
   const [githubUsername, setGithubUsername] = useState<string | null>(null);
+  
+  // Token management state
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [tokenBalance, setTokenBalance] = useState<number | null>(null); // Start as null to prevent hydration issues
+  const [isTokenCheckEnabled, setIsTokenCheckEnabled] = useState(true); // Enable token system
+  const [screenshotError, setScreenshotError] = useState<string | null>(null);
+  const [loadingStage, setLoadingStage] = useState<string | null>(null);
+  const [isGeneratingApp, setIsGeneratingApp] = useState(false);
+  const [currentGenerationCredits, setCurrentGenerationCredits] = useState<number>(0);
+  
+  // Function to check if user can generate apps (GitHub connected + sufficient credits)
+  const canGenerateApp = () => {
+    if (!user) {
+      return { canGenerate: false, reason: 'User not logged in' };
+    }
+    
+    if (!githubConnected) {
+      return { canGenerate: false, reason: 'GitHub account not connected' };
+    }
+    
+    if (tokenBalance === null) {
+      return { canGenerate: false, reason: 'Loading credit balance...' };
+    }
+    
+    if (tokenBalance <= 0) {
+      return { canGenerate: false, reason: 'Insufficient credits' };
+    }
+    
+    return { canGenerate: true, reason: 'Ready to generate' };
+  };
+
+  // Function to show credit consumption transparency
+  const showCreditTransparency = (creditsConsumed: number, operation: string) => {
+    const transparencyMessage = `
+💳 **Credit Consumption Transparency**
+
+**Operation:** ${operation}
+**Credits Consumed:** ${creditsConsumed.toLocaleString()}
+**Previous Balance:** ${(tokenBalance + creditsConsumed).toLocaleString()}
+**New Balance:** ${tokenBalance?.toLocaleString() || 'Loading...'}
+
+**What was consumed:**
+• AI model processing: ~${Math.round(creditsConsumed * 0.7).toLocaleString()} credits
+• Code generation: ~${Math.round(creditsConsumed * 0.2).toLocaleString()} credits  
+• GitHub integration: ~${Math.round(creditsConsumed * 0.1).toLocaleString()} credits
+
+**Your credits are used transparently for:**
+✅ AI-powered code generation
+✅ GitHub repository creation
+✅ File management and deployment
+✅ Real-time development server
+
+*All credit consumption is logged and can be reviewed in your account.*
+    `;
+    
+    addChatMessage(transparencyMessage, 'system');
+  };
   const [savedApps, setSavedApps] = useState<Array<{
     id: string;
     name: string;
@@ -114,32 +176,146 @@ export default function AISandboxPage() {
     prompt?: string;
     files?: Record<string, string>;
     chatHistory?: ChatMessage[];
+    creditsConsumed?: number;
   }>>([]);
-  const [selectedStyle, setSelectedStyle] = useState<string | null>(null);
+
   const [mounted, setMounted] = useState(false);
   
+
+
+
+
+
+
+  // Function to handle payment success
+  const handlePaymentSuccess = async (paymentData: any) => {
+    console.log('[payment-success] Payment successful:', paymentData);
+    
+    try {
+      // Refresh token balance after payment
+      await refreshTokenBalance();
+      
+      // Show payment success message with credit details
+      const creditsAdded = paymentData.credits || 0;
+      addChatMessage(`✅ **Payment Successful!**`, 'system');
+      addChatMessage(`💳 **${creditsAdded.toLocaleString()} credits added to your account**`, 'system');
+      addChatMessage(`💰 **Payment ID:** ${paymentData.paymentId}`, 'system');
+      addChatMessage(`📅 **Date:** ${new Date().toLocaleString()}`, 'system');
+      
+      // Show new balance
+      if (tokenBalance !== null) {
+        addChatMessage(`💳 **New Balance:** ${tokenBalance.toLocaleString()} credits`, 'system');
+      }
+      
+      // Close payment modal
+      setShowPaymentModal(false);
+      
+    } catch (error) {
+      console.error('[payment-success] Error handling payment success:', error);
+      addChatMessage('⚠️ Payment successful but error updating balance', 'error');
+    }
+  };
+
+  // Function to handle payment failure
+  const handlePaymentFailure = async (errorData: any) => {
+    console.error('[payment-failure] Payment failed:', errorData);
+    
+    addChatMessage(`❌ **Payment Failed**`, 'error');
+    addChatMessage(`💳 **Reason:** ${errorData.reason || 'Unknown error'}`, 'error');
+    addChatMessage(`💰 **Payment ID:** ${errorData.paymentId || 'N/A'}`, 'error');
+    addChatMessage(`📅 **Date:** ${new Date().toLocaleString()}`, 'error');
+    
+    // Keep payment modal open for retry
+    // setShowPaymentModal(false); // Don't close, let user retry
+  };
+
+
+
+  // Function to fetch credit consumption history
+  const fetchCreditHistory = async () => {
+    if (!user) return;
+    
+    try {
+      const response = await fetch(`/api/tokens/track-consumption?userId=${user.uid}&limit=100`);
+      const data = await response.json();
+      
+      if (data.success) {
+        setCreditHistory(data.history || []);
+      } else {
+        console.error('[credit-history] Failed to fetch history:', data.error);
+      }
+    } catch (error) {
+      console.error('[credit-history] Error fetching history:', error);
+    }
+  };
+
+  // Function to track credit consumption history
+  const trackCreditConsumption = async (operation: string, creditsConsumed: number, details: any = {}) => {
+    if (!user) return;
+    
+    try {
+      const consumptionRecord = {
+        userId: user.uid,
+        operation,
+        creditsConsumed,
+        details,
+        timestamp: new Date(),
+        balanceBefore: (tokenBalance || 0) + creditsConsumed,
+        balanceAfter: tokenBalance || 0
+      };
+      
+      // Store consumption record in database
+      const response = await fetch('/api/tokens/track-consumption', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(consumptionRecord)
+      });
+      
+      if (response.ok) {
+        console.log('[credit-tracking] Consumption tracked successfully');
+      } else {
+        console.error('[credit-tracking] Failed to track consumption');
+      }
+    } catch (error) {
+      console.error('[credit-tracking] Error tracking consumption:', error);
+    }
+  };
+
+  // Function to refresh token balance
+  const refreshTokenBalance = async () => {
+    if (user && isTokenCheckEnabled) {
+      try {
+        const response = await fetch(`/api/tokens/balance?userId=${user.uid}`);
+        const data = await response.json();
+        if (data.success) {
+          setTokenBalance(data.balance.tokens);
+        } else {
+          setTokenBalance(0); // Set to 0 if API fails
+        }
+      } catch (error) {
+        console.error('Failed to refresh token balance:', error);
+        setTokenBalance(0); // Set to 0 if API fails
+      }
+    }
+  };
+  
   // New state for prompt-based generation
-  const [generationMode, setGenerationMode] = useState<'clone' | 'prompt'>('clone');
-  const [showPromptInput, setShowPromptInput] = useState(false);
+  const [generationMode, setGenerationMode] = useState<'prompt'>('prompt');
+  const [showPromptInput, setShowPromptInput] = useState(true);
   const [showLoadingBackground, setShowLoadingBackground] = useState(false);
-  const [urlScreenshot, setUrlScreenshot] = useState<string | null>(null);
-  const [isCapturingScreenshot, setIsCapturingScreenshot] = useState(false);
-  const [screenshotError, setScreenshotError] = useState<string | null>(null);
-  const [isPreparingDesign, setIsPreparingDesign] = useState(false);
-  const [targetUrl, setTargetUrl] = useState<string>('');
-  const [loadingStage, setLoadingStage] = useState<'gathering' | 'planning' | 'generating' | null>(null);
+
   const [sandboxFiles, setSandboxFiles] = useState<Record<string, string>>({});
   const [fileStructure, setFileStructure] = useState<string>('');
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   
   const [conversationContext, setConversationContext] = useState<{
-    scrapedWebsites: Array<{ url: string; content: any; timestamp: Date }>;
     generatedComponents: Array<{ name: string; path: string; content: string }>;
     appliedCode: Array<{ files: string[]; timestamp: Date }>;
     currentProject: string;
     lastGeneratedCode?: string;
   }>({
-    scrapedWebsites: [],
     generatedComponents: [],
     appliedCode: [],
     currentProject: '',
@@ -246,16 +422,22 @@ export default function AISandboxPage() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [showHomeScreen]);
   
-  // Start capturing screenshot if URL is provided on mount (from home screen)
+  // Refresh token balance when user changes and periodically
   useEffect(() => {
-    if (!showHomeScreen && homeUrlInput && !urlScreenshot && !isCapturingScreenshot) {
-      let screenshotUrl = homeUrlInput.trim();
-      if (!screenshotUrl.match(/^https?:\/\//i)) {
-        screenshotUrl = 'https://' + screenshotUrl;
-      }
-      captureUrlScreenshot(screenshotUrl);
+    if (user && isTokenCheckEnabled) {
+      // Initial refresh
+      refreshTokenBalance();
+      
+      // Refresh every 30 seconds
+      const interval = setInterval(refreshTokenBalance, 30000);
+      
+      return () => clearInterval(interval);
+    } else if (!user) {
+      // Reset token balance when user logs out
+      setTokenBalance(null);
     }
-  }, [showHomeScreen, homeUrlInput]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [user, isTokenCheckEnabled]);
+
 
 
   useEffect(() => {
@@ -370,10 +552,10 @@ export default function AISandboxPage() {
       setSandboxData(sandboxData);
       updateStatus('Sandbox created, cloning repository...', false);
       
-      // Update URL with sandbox ID
-      const newParams = new URLSearchParams(searchParams.toString());
-      newParams.set('sandbox', sandboxData.sandboxId);
-      router.push(`/?${newParams.toString()}`, { scroll: false });
+      // Update URL with sandbox ID (optional - for debugging and session persistence)
+      // const newParams = new URLSearchParams(searchParams.toString());
+      // newParams.set('sandbox', sandboxData.sandboxId);
+      // router.push(`/?${newParams.toString()}`, { scroll: false });
 
       // Wait a moment for sandbox to be ready
       await new Promise(resolve => setTimeout(resolve, 2000));
@@ -867,12 +1049,13 @@ export default function AISandboxPage() {
   };
 
   const createSandbox = async (fromHomeScreen = false) => {
-    console.log('[createSandbox] Starting sandbox creation...');
-    setLoading(true);
-    setShowLoadingBackground(true);
-    updateStatus('Creating sandbox...', false);
-    setResponseArea([]);
-    setScreenshotError(null);
+    try {
+      console.log('[createSandbox] Starting sandbox creation...');
+      setLoading(true);
+      setShowLoadingBackground(true);
+      updateStatus('Creating sandbox...', false);
+      setResponseArea([]);
+      setScreenshotError(null);
     
     try {
       const response = await fetch('/api/create-ai-sandbox', {
@@ -891,11 +1074,11 @@ export default function AISandboxPage() {
         log(`Sandbox ID: ${data.sandboxId}`);
         log(`URL: ${data.url}`);
         
-        // Update URL with sandbox ID
-        const newParams = new URLSearchParams(searchParams.toString());
-        newParams.set('sandbox', data.sandboxId);
-        newParams.set('model', aiModel);
-        router.push(`/?${newParams.toString()}`, { scroll: false });
+        // Update URL with sandbox ID (optional - for debugging and session persistence)
+        // const newParams = new URLSearchParams(searchParams.toString());
+        // newParams.set('sandbox', data.sandboxId);
+        // newParams.set('model', aiModel);
+        // router.push(`/?${newParams.toString()}`, { scroll: false });
         
         // Fade out loading background after sandbox loads
         setTimeout(() => {
@@ -975,6 +1158,9 @@ export default function AISandboxPage() {
                     console.log('[createSandbox] GitHub repository created successfully:', repoUrl);
                     addChatMessage(`🚀 Created GitHub repository: ${repoUrl}`, 'system');
                     
+                    // Note: Credits will be consumed during code generation, not here
+                    console.log('[createSandbox] GitHub repo created - credits will be consumed during code generation');
+                    
                     // Extract repo name from URL
                     const repoName = repoUrl.split('/').pop() || 'unknown-repo';
                     console.log('[createSandbox] Extracted repo name:', repoName);
@@ -1018,7 +1204,8 @@ export default function AISandboxPage() {
                               githubRepoUrl: githubRepoUrl,
                               prompt: promptInput,
                               files: currentFiles,
-                              chatHistory: chatMessages
+                              chatHistory: chatMessages,
+                              creditsConsumed: currentGenerationCredits
                             });
                             
                             if (appId) {
@@ -1033,10 +1220,16 @@ export default function AISandboxPage() {
                   } else {
                     console.log('[createSandbox] GitHub repository creation failed');
                     addChatMessage('⚠️ Failed to create GitHub repository', 'system');
+                    
+                    // Don't consume credits if GitHub repo creation failed
+                    addChatMessage('💳 No credits consumed - GitHub repository creation failed', 'system');
                   }
                 } catch (error) {
                   console.error('[createSandbox] GitHub repository creation error:', error);
                   addChatMessage('⚠️ GitHub repository creation failed', 'system');
+                  
+                  // Don't consume credits if GitHub repo creation failed
+                  addChatMessage('💳 No credits consumed - GitHub repository creation failed', 'system');
                 }
               } else {
                 console.log('[createSandbox] GitHub integration skipped:', {
@@ -1050,6 +1243,38 @@ export default function AISandboxPage() {
                   console.log('[createSandbox] GitHub not connected - checking why...');
                   console.log('[createSandbox] User state:', { user: !!user, userId: user?.uid });
                   console.log('[createSandbox] GitHub connection state:', { githubConnected, githubUsername });
+                  
+                  // If GitHub is not connected, still consume credits since app generation is successful
+                  if (isTokenCheckEnabled) {
+                    try {
+                      const estimatedTokens = Math.ceil(promptInput.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(promptInput.length / 4) + 800 + 2500) * 0.2);
+                      
+                      const consumeResponse = await fetch('/api/tokens/consume', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          userId: user.uid,
+                          prompt: promptInput,
+                        }),
+                      });
+
+                      const consumeData = await consumeResponse.json();
+
+                      if (consumeData.success) {
+                        // Update token balance
+                        setTokenBalance(consumeData.remainingBalance);
+                        addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()}. Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                      } else {
+                        console.error('Failed to consume tokens (GitHub not connected):', consumeData.error);
+                        addChatMessage(`⚠️ Warning: Failed to consume credits`, 'system');
+                      }
+                    } catch (error) {
+                      console.error('Error consuming tokens (GitHub not connected):', error);
+                      addChatMessage(`⚠️ Warning: Failed to consume credits`, 'system');
+                    }
+                  }
                 }
                 
                 if (conversationContext.appliedCode.length > 0) {
@@ -1097,7 +1322,14 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     } finally {
       setLoading(false);
     }
-  };
+  } catch (error: any) {
+    console.error('[createSandbox] Outer error:', error);
+    updateStatus('Error', false);
+    log(`Failed to create sandbox: ${error.message}`, 'error');
+    addChatMessage(`Failed to create sandbox: ${error.message}`, 'system');
+    setLoading(false);
+  }
+};
 
   const displayStructure = (structure: any) => {
     if (typeof structure === 'object') {
@@ -1733,6 +1965,8 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     }
   };
 
+
+
   const loadSavedApp = async (appId: string) => {
     try {
       setLoadingAppId(appId);
@@ -2141,6 +2375,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     prompt: string;
     files: Record<string, string>;
     chatHistory: ChatMessage[];
+    creditsConsumed?: number;
   }) => {
     if (!user) {
       console.log('[saveAppToDatabase] No user available');
@@ -2172,6 +2407,7 @@ Tip: I automatically detect and install npm packages from your code imports (lik
             prompt: appData.prompt,
             files: appData.files,
             chatHistory: appData.chatHistory,
+            creditsConsumed: appData.creditsConsumed || currentGenerationCredits,
             previewUrl: sandboxData?.url || '',
             tags: ['generated', 'codebharat-dev'],
             createdAt: new Date(),
@@ -2945,28 +3181,6 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         </div>
       );
     } else if (activeTab === 'preview') {
-      // Show screenshot when we have one and (loading OR generating OR no sandbox yet)
-      if (urlScreenshot && (loading || generationProgress.isGenerating || !sandboxData?.url || isPreparingDesign)) {
-        return (
-          <div className="relative w-full h-full bg-gray-100">
-            <img 
-              src={urlScreenshot} 
-              alt="Website preview" 
-              className="w-full h-full object-contain"
-            />
-            {(generationProgress.isGenerating || isPreparingDesign) && (
-              <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
-                <div className="text-center bg-black/70 rounded-lg p-6 backdrop-blur-sm">
-                  <div className="w-12 h-12 border-3 border-gray-300 border-t-white rounded-full animate-spin mx-auto mb-3" />
-                  <p className="text-white text-sm font-medium">
-                    {generationProgress.isGenerating ? 'Generating code...' : `Preparing your design for ${targetUrl}...`}
-                  </p>
-                </div>
-              </div>
-            )}
-          </div>
-        );
-      }
       
       // Check loading stage FIRST to prevent showing old sandbox
       // Don't show loading overlay for edits
@@ -3024,27 +3238,12 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         );
       }
       
-      // Show loading animation when capturing screenshot
-      if (isCapturingScreenshot) {
-        return (
-          <div className="flex items-center justify-center h-full bg-gray-900">
-            <div className="text-center">
-              <div className="w-12 h-12 border-3 border-gray-600 border-t-white rounded-full animate-spin mx-auto mb-4" />
-              <h3 className="text-lg font-medium text-white">Gathering website information</h3>
-            </div>
-          </div>
-        );
-      }
+
       
-      // Default state when no sandbox and no screenshot
+      // Default state when no sandbox
       return (
         <div className="flex items-center justify-center h-full bg-gray-50 text-gray-600 text-lg">
-          {screenshotError ? (
-            <div className="text-center">
-              <p className="mb-2">Failed to capture screenshot</p>
-              <p className="text-sm text-gray-500">{screenshotError}</p>
-            </div>
-          ) : sandboxData ? (
+          {sandboxData ? (
             <div className="text-gray-500">
               <div className="w-8 h-8 border-2 border-gray-300 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
               <p className="text-sm">Loading preview...</p>
@@ -3109,6 +3308,55 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       addChatMessage('AI is disabled. Please enable it first.', 'system');
       return;
     }
+
+    // Check if user is logged in
+    if (!user) {
+      addChatMessage('❌ Please sign in to generate apps. You need AI Credits to use this feature.', 'system');
+      setShowLoginModal(true);
+      return;
+    }
+
+    // Check token balance before starting generation (but don't consume yet)
+    if (isTokenCheckEnabled) {
+      try {
+        // First, check if user has enough tokens
+        const estimatedTokens = Math.ceil(message.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(message.length / 4) + 800 + 2500) * 0.2);
+        addChatMessage(`💳 Estimating ${estimatedTokens.toLocaleString()} credits for this request...`, 'system');
+        
+        const response = await fetch('/api/tokens/check-balance', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            userId: user.uid,
+            requiredTokens: estimatedTokens,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (!data.success) {
+          if (response.status === 402) {
+            // Insufficient tokens - show payment modal and stop generation
+            addChatMessage(`❌ Insufficient AI Credits! You have ${data.currentBalance} credits but need ${data.requiredTokens} credits to generate this app. Please purchase credits to continue.`, 'system');
+            setShowPaymentModal(true);
+            return;
+          } else if (response.status === 500 && data.error?.includes('Firebase not configured')) {
+            // Firebase not configured - show setup message and stop generation
+            addChatMessage(`❌ AI Credits system not configured. Please contact support to enable the credits system.`, 'system');
+            return;
+          } else {
+            addChatMessage(`❌ Error: ${data.error}`, 'system');
+            return;
+          }
+        }
+      } catch (error) {
+        console.error('Error checking token balance:', error);
+        addChatMessage('❌ AI Credits system unavailable. Please try again or contact support.', 'system');
+        return; // Stop generation if token system fails
+      }
+    }
     
     addChatMessage(message, 'user');
     setAiChatInput('');
@@ -3137,6 +3385,23 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       });
     }
 
+    // Check if user can generate apps (GitHub connected + sufficient credits)
+    const generationCheck = canGenerateApp();
+    if (!generationCheck.canGenerate) {
+      addChatMessage(`❌ **Cannot generate app:** ${generationCheck.reason}`, 'error');
+      
+      if (!githubConnected) {
+        addChatMessage('🔗 **Please connect your GitHub account first**', 'system');
+        addChatMessage('💡 Connect GitHub to create repositories for your apps', 'system');
+        setShowGitHubConnectionModal(true);
+      } else if (tokenBalance !== null && tokenBalance <= 0) {
+        addChatMessage('💳 **Please purchase credits to continue**', 'system');
+        addChatMessage('💡 You can buy credits from the payment section', 'system');
+        setShowPaymentModal(true);
+      }
+      return;
+    }
+    
     // Create GitHub repository immediately for new generations
     let githubRepoPromise: Promise<string | null> | null = null;
     
@@ -3179,6 +3444,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     console.log('[sendChatMessage] Generation mode:', isEdit ? 'EDIT' : 'NEW GENERATION');
     
     try {
+      // Reset credits for new generation
+      setCurrentGenerationCredits(0);
+      
       // Generation tab is already active from scraping phase
       setGenerationProgress(prev => ({
         ...prev,  // Preserve all existing state
@@ -3247,8 +3515,21 @@ Tip: I automatically detect and install npm packages from your code imports (lik
           
           for (const line of lines) {
             if (line.startsWith('data: ')) {
+              const jsonString = line.slice(6);
+              
+              // Validate JSON string before parsing
+              if (!jsonString.trim()) {
+                console.warn('[sendChatMessage] Empty JSON string received, skipping');
+                continue;
+              }
+              
+              // Check for unterminated strings or other JSON issues
+              if (jsonString.includes('\\') && !jsonString.includes('\\\\')) {
+                console.warn('[sendChatMessage] Potential escape character issue in JSON:', jsonString.substring(0, 100));
+              }
+              
               try {
-                const data = JSON.parse(line.slice(6));
+                const data = JSON.parse(jsonString);
                 
                 if (data.type === 'status') {
                   setGenerationProgress(prev => ({ ...prev, status: data.message }));
@@ -3396,8 +3677,132 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                     status: data.message || `Installing ${data.name}`
                   }));
                 } else if (data.type === 'complete') {
+                  console.log('[generate-code] Received completion event:', {
+                    hasGeneratedCode: !!data.generatedCode,
+                    hasExplanation: !!data.explanation,
+                    hasTokenUsage: !!data.tokenUsage,
+                    tokenUsage: data.tokenUsage,
+                    tokenUsageType: typeof data.tokenUsage,
+                    tokenUsageKeys: data.tokenUsage ? Object.keys(data.tokenUsage) : 'no keys'
+                  });
                   generatedCode = data.generatedCode;
                   explanation = data.explanation;
+                  
+                  // Consume credits based on actual token usage from API response
+                  console.log('[generate-code] Checking token usage data:', {
+                    hasTokenUsage: !!data.tokenUsage,
+                    tokenUsage: data.tokenUsage,
+                    tokenUsageType: typeof data.tokenUsage,
+                    user: !!user,
+                    isTokenCheckEnabled,
+                    userUid: user?.uid
+                  });
+                  
+                  if (data.tokenUsage && user && isTokenCheckEnabled) {
+                    try {
+                      console.log('[generate-code] Token usage data structure:', {
+                        tokenUsage: data.tokenUsage,
+                        promptTokens: data.tokenUsage.promptTokens,
+                        completionTokens: data.tokenUsage.completionTokens,
+                        promptTokensType: typeof data.tokenUsage.promptTokens,
+                        completionTokensType: typeof data.tokenUsage.completionTokens
+                      });
+                      
+                      // Validate token usage data
+                      if (typeof data.tokenUsage.promptTokens !== 'number' || typeof data.tokenUsage.completionTokens !== 'number') {
+                        console.error('[generate-code] Invalid token usage data:', data.tokenUsage);
+                        throw new Error('Invalid token usage data structure');
+                      }
+                      
+                      const actualTokens = data.tokenUsage.promptTokens + data.tokenUsage.completionTokens;
+                      
+                      console.log('[generate-code] Actual token usage from API:', {
+                        promptTokens: data.tokenUsage.promptTokens,
+                        completionTokens: data.tokenUsage.completionTokens,
+                        totalTokens: actualTokens
+                      });
+                      
+
+                      
+                      // Consume the actual tokens used
+                      const consumeResponse = await fetch('/api/tokens/consume-actual', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          userId: user.uid,
+                          actualTokens,
+                          description: `AI Code Generation: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`
+                        }),
+                      });
+
+                      const consumeData = await consumeResponse.json();
+
+                      if (consumeData.success) {
+                        // Update token balance
+                        setTokenBalance(consumeData.remainingBalance);
+                        setCurrentGenerationCredits(actualTokens); // Track credits for this generation
+                        
+                        // Show detailed transparency report
+                        showCreditTransparency(actualTokens, 'AI Code Generation');
+                        
+                        // Track consumption history for transparency
+                        await trackCreditConsumption('AI Code Generation', actualTokens, {
+                          promptLength: message.length,
+                          model: aiModel,
+                          hasGitHubRepo: !!currentGitHubRepo,
+                          filesGenerated: 0 // Will be updated after file parsing
+                        });
+                      } else {
+                        console.error('Failed to consume actual tokens:', consumeData.error);
+                        addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                      }
+                    } catch (error) {
+                      console.error('Error consuming actual tokens:', error);
+                      addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                    }
+                  } else {
+                    console.log('[generate-code] Credit consumption skipped:', {
+                      hasTokenUsage: !!data.tokenUsage,
+                      hasUser: !!user,
+                      isTokenCheckEnabled,
+                      userUid: user?.uid
+                    });
+                  }
+                  
+                  if (isTokenCheckEnabled && user && !data.tokenUsage) {
+                    // Fallback: if no token usage data, use estimated consumption
+                    console.log('[generate-code] No token usage data, using fallback estimated consumption');
+                    try {
+                      const estimatedTokens = Math.ceil(message.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(message.length / 4) + 800 + 2500) * 0.2);
+                      
+                      const consumeResponse = await fetch('/api/tokens/consume', {
+                        method: 'POST',
+                        headers: {
+                          'Content-Type': 'application/json',
+                        },
+                        body: JSON.stringify({
+                          userId: user.uid,
+                          prompt: message,
+                        }),
+                      });
+
+                      const consumeData = await consumeResponse.json();
+
+                      if (consumeData.success) {
+                        // Update token balance
+                        setTokenBalance(consumeData.remainingBalance);
+                        addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()} (estimated). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                      } else {
+                        console.error('Failed to consume estimated tokens:', consumeData.error);
+                        addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                      }
+                    } catch (error) {
+                      console.error('Error consuming estimated tokens:', error);
+                      addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                    }
+                  }
                   
                   // Save the last generated code
                   setConversationContext(prev => ({
@@ -3456,6 +3861,12 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                 }
               } catch (e) {
                 console.error('Failed to parse SSE data:', e);
+                console.error('Problematic JSON string:', jsonString);
+                console.error('JSON string length:', jsonString.length);
+                console.error('JSON string preview:', jsonString.substring(0, 200));
+                
+                // Try to recover by finding the next valid JSON
+                continue;
               }
             }
           }
@@ -3528,6 +3939,19 @@ Tip: I automatically detect and install npm packages from your code imports (lik
         thinkingDuration: undefined
       }));
       
+      // Add credit consumption summary
+      if (user && isTokenCheckEnabled) {
+        try {
+          const balanceResponse = await fetch(`/api/tokens/balance?userId=${user.uid}`);
+          const balanceData = await balanceResponse.json();
+          if (balanceData.success) {
+            addChatMessage(`✅ App generation completed! Current balance: ${balanceData.balance.tokens.toLocaleString()} credits`, 'system');
+          }
+        } catch (error) {
+          console.error('Failed to fetch updated balance:', error);
+        }
+      }
+      
       setTimeout(() => {
         // Switch to preview but keep files for display
         setActiveTab('preview');
@@ -3535,6 +3959,12 @@ Tip: I automatically detect and install npm packages from your code imports (lik
     } catch (error: any) {
       setChatMessages(prev => prev.filter(msg => msg.content !== 'Thinking...'));
       addChatMessage(`Error: ${error.message}`, 'system');
+      
+      // Don't consume credits if generation failed
+      if (isTokenCheckEnabled && user) {
+        addChatMessage('💳 No credits consumed - generation failed', 'system');
+      }
+      
       // Reset generation progress and switch back to preview on error
       setGenerationProgress({
         isGenerating: false,
@@ -3666,362 +4096,9 @@ Tip: I automatically detect and install npm packages from your code imports (lik
   };
 
 
-  const cloneWebsite = async () => {
-    let url = urlInput.trim();
-    if (!url) {
-      setUrlStatus(prev => [...prev, 'Please enter a URL']);
-      return;
-    }
-    
-    if (!url.match(/^https?:\/\//i)) {
-      url = 'https://' + url;
-    }
-    
-    setUrlStatus([`Using: ${url}`, 'Starting to scrape...']);
-    
-    setUrlOverlayVisible(false);
-    
-    // Remove protocol for cleaner display
-    const cleanUrl = url.replace(/^https?:\/\//i, '');
-    addChatMessage(`Starting to clone ${cleanUrl}...`, 'system');
-    
-    // Capture screenshot immediately and switch to preview tab
-    captureUrlScreenshot(url);
-    
-    try {
-      addChatMessage('Scraping website content...', 'system');
-      const scrapeResponse = await fetch('/api/scrape-url-enhanced', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-      });
-      
-      if (!scrapeResponse.ok) {
-        throw new Error(`Scraping failed: ${scrapeResponse.status}`);
-      }
-      
-      const scrapeData = await scrapeResponse.json();
-      
-      if (!scrapeData.success) {
-        throw new Error(scrapeData.error || 'Failed to scrape website');
-      }
-      
-      addChatMessage(`Scraped ${scrapeData.content.length} characters from ${url}`, 'system');
-      
-      // Clear preparing design state and switch to generation tab
-      setIsPreparingDesign(false);
-      setActiveTab('generation');
-      
-      setConversationContext(prev => ({
-        ...prev,
-        scrapedWebsites: [...prev.scrapedWebsites, {
-          url,
-          content: scrapeData,
-          timestamp: new Date()
-        }],
-        currentProject: `Clone of ${url}`
-      }));
-      
-      // Start sandbox creation in parallel with code generation
-      let sandboxPromise: Promise<void> | null = null;
-      if (!sandboxData) {
-        addChatMessage('Creating sandbox while generating your React app...', 'system');
-        sandboxPromise = createSandbox(true);
-      }
-      
-      addChatMessage('Analyzing and generating React recreation...', 'system');
-      
-      const recreatePrompt = `I scraped this website and want you to recreate it as a modern React application.
 
-URL: ${url}
 
-SCRAPED CONTENT:
-${scrapeData.content}
 
-${homeContextInput ? `ADDITIONAL CONTEXT/REQUIREMENTS FROM USER:
-${homeContextInput}
-
-Please incorporate these requirements into the design and implementation.` : ''}
-
-REQUIREMENTS:
-1. Create a COMPLETE React application with App.jsx as the main component
-2. App.jsx MUST import and render all other components
-3. Recreate the main sections and layout from the scraped content
-4. ${homeContextInput ? `Apply the user's context/theme: "${homeContextInput}"` : `Use a modern dark theme with excellent contrast:
-   - Background: #0a0a0a
-   - Text: #ffffff
-   - Links: #60a5fa
-   - Accent: #3b82f6`}
-5. Make it fully responsive
-6. Include hover effects and smooth transitions
-7. Create separate components for major sections (Header, Hero, Features, etc.)
-8. Use semantic HTML5 elements
-
-IMPORTANT CONSTRAINTS:
-- DO NOT use React Router or any routing libraries
-- Use regular <a> tags with href="#section" for navigation, NOT Link or NavLink components
-- This is a single-page application, no routing needed
-- ALWAYS create src/App.jsx that imports ALL components
-- Each component should be in src/components/
-- Use Tailwind CSS for ALL styling (no custom CSS files)
-- Make sure the app actually renders visible content
-- Create ALL components that you reference in imports
-
-IMAGE HANDLING RULES:
-- When the scraped content includes images, USE THE ORIGINAL IMAGE URLS whenever appropriate
-- Keep existing images from the scraped site (logos, product images, hero images, icons, etc.)
-- Use the actual image URLs provided in the scraped content, not placeholders
-- Only use placeholder images or generic services when no real images are available
-- For company logos and brand images, ALWAYS use the original URLs to maintain brand identity
-- If scraped data contains image URLs, include them in your img tags
-- Example: If you see "https://example.com/logo.png" in the scraped content, use that exact URL
-
-Focus on the key sections and content, making it clean and modern while preserving visual assets.`;
-      
-      setGenerationProgress(prev => ({
-        isGenerating: true,
-        status: 'Initializing AI...',
-        components: [],
-        currentComponent: 0,
-        streamedCode: '',
-        isStreaming: true,
-        isThinking: false,
-        thinkingText: undefined,
-        thinkingDuration: undefined,
-        // Keep previous files until new ones are generated
-        files: prev.files || [],
-        currentFile: undefined,
-        lastProcessedPosition: 0
-      }));
-      
-      // Switch to generation tab when starting
-      setActiveTab('generation');
-      
-      const aiResponse = await fetch('/api/generate-ai-code-stream', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          prompt: recreatePrompt,
-          model: aiModel,
-          context: {
-            sandboxId: sandboxData?.id,
-            structure: structureContent,
-            conversationContext: conversationContext
-          }
-        })
-      });
-      
-      if (!aiResponse.ok) {
-        throw new Error(`AI generation failed: ${aiResponse.status}`);
-      }
-      
-      const reader = aiResponse.body?.getReader();
-      const decoder = new TextDecoder();
-      let generatedCode = '';
-      let explanation = '';
-      
-      if (reader) {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                
-                if (data.type === 'status') {
-                  setGenerationProgress(prev => ({ ...prev, status: data.message }));
-                } else if (data.type === 'thinking') {
-                  setGenerationProgress(prev => ({ 
-                    ...prev, 
-                    isThinking: true,
-                    thinkingText: (prev.thinkingText || '') + data.text
-                  }));
-                } else if (data.type === 'thinking_complete') {
-                  setGenerationProgress(prev => ({ 
-                    ...prev, 
-                    isThinking: false,
-                    thinkingDuration: data.duration
-                  }));
-                } else if (data.type === 'conversation') {
-                  // Add conversational text to chat only if it's not code
-                  let text = data.text || '';
-                  
-                  // Remove package tags from the text
-                  text = text.replace(/<package>[^<]*<\/package>/g, '');
-                  text = text.replace(/<packages>[^<]*<\/packages>/g, '');
-                  
-                  // Filter out any XML tags and file content that slipped through
-                  if (!text.includes('<file') && !text.includes('import React') && 
-                      !text.includes('export default') && !text.includes('className=') &&
-                      text.trim().length > 0) {
-                    addChatMessage(text.trim(), 'ai');
-                  }
-                } else if (data.type === 'stream' && data.raw) {
-                  setGenerationProgress(prev => ({ 
-                    ...prev, 
-                    streamedCode: prev.streamedCode + data.text,
-                    lastProcessedPosition: prev.lastProcessedPosition || 0
-                  }));
-                } else if (data.type === 'component') {
-                  setGenerationProgress(prev => ({
-                    ...prev,
-                    status: `Generated ${data.name}`,
-                    components: [...prev.components, { 
-                      name: data.name,
-                      path: data.path,
-                      completed: true
-                    }],
-                    currentComponent: prev.currentComponent + 1
-                  }));
-                } else if (data.type === 'complete') {
-                  generatedCode = data.generatedCode;
-                  explanation = data.explanation;
-                  
-                  // Save the last generated code
-                  setConversationContext(prev => ({
-                    ...prev,
-                    lastGeneratedCode: generatedCode
-                  }));
-                }
-              } catch (e) {
-                console.error('Error parsing streaming data:', e);
-              }
-            }
-          }
-        }
-      }
-      
-      setGenerationProgress(prev => ({
-        ...prev,
-        isGenerating: false,
-        isStreaming: false,
-        status: 'Generation complete!',
-        isEdit: prev.isEdit
-      }));
-      
-      if (generatedCode) {
-        addChatMessage('AI recreation generated!', 'system');
-        
-        // Add the explanation to chat if available
-        if (explanation && explanation.trim()) {
-          addChatMessage(explanation, 'ai');
-        }
-        
-        setPromptInput(generatedCode);
-        // Don't show the Generated Code panel by default
-        // setLeftPanelVisible(true);
-        
-        // Wait for sandbox creation if it's still in progress
-        if (sandboxPromise) {
-          addChatMessage('Waiting for sandbox to be ready...', 'system');
-          try {
-            await sandboxPromise;
-            // Remove the waiting message
-            setChatMessages(prev => prev.filter(msg => msg.content !== 'Waiting for sandbox to be ready...'));
-          } catch (error: any) {
-            addChatMessage('Sandbox creation failed. Cannot apply code.', 'system');
-            throw error;
-          }
-        }
-        
-        // First application for cloned site should not be in edit mode
-        await applyGeneratedCode(generatedCode, false);
-        
-        addChatMessage(
-          `Successfully recreated ${url} as a modern React app${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}! The scraped content is now in my context, so you can ask me to modify specific sections or add features based on the original site.`, 
-          'ai',
-          {
-            scrapedUrl: url,
-            scrapedContent: scrapeData,
-            generatedCode: generatedCode
-          }
-        );
-        
-        setUrlInput('');
-        setUrlStatus([]);
-        setHomeContextInput('');
-        
-        // Clear generation progress and all screenshot/design states
-        setGenerationProgress(prev => ({
-          ...prev,
-          isGenerating: false,
-          isStreaming: false,
-          status: 'Generation complete!'
-        }));
-        
-        // Clear screenshot and preparing design states to prevent them from showing on next run
-        setUrlScreenshot(null);
-        setIsPreparingDesign(false);
-        setTargetUrl('');
-        setScreenshotError(null);
-        setLoadingStage(null); // Clear loading stage
-        
-        setTimeout(() => {
-          // Switch back to preview tab but keep files
-          setActiveTab('preview');
-        }, 1000); // Show completion briefly then switch
-      } else {
-        throw new Error('Failed to generate recreation');
-      }
-      
-    } catch (error: any) {
-      addChatMessage(`Failed to clone website: ${error.message}`, 'system');
-      setUrlStatus([]);
-      setIsPreparingDesign(false);
-      // Clear all states on error
-      setUrlScreenshot(null);
-      setTargetUrl('');
-      setScreenshotError(null);
-      setLoadingStage(null);
-      setGenerationProgress(prev => ({
-        ...prev,
-        isGenerating: false,
-        isStreaming: false,
-        status: '',
-        // Keep files to display in sidebar
-        files: prev.files
-      }));
-      setActiveTab('preview');
-    }
-  };
-
-  const captureUrlScreenshot = async (url: string) => {
-    setIsCapturingScreenshot(true);
-    setScreenshotError(null);
-    try {
-      const response = await fetch('/api/scrape-screenshot', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url })
-      });
-      
-      const data = await response.json();
-      if (data.success && data.screenshot) {
-        setUrlScreenshot(data.screenshot);
-        // Set preparing design state
-        setIsPreparingDesign(true);
-        // Store the clean URL for display
-        const cleanUrl = url.replace(/^https?:\/\//i, '');
-        setTargetUrl(cleanUrl);
-        // Switch to preview tab to show the screenshot
-        if (activeTab !== 'preview') {
-          setActiveTab('preview');
-        }
-      } else {
-        setScreenshotError(data.error || 'Failed to capture screenshot');
-      }
-    } catch (error) {
-      console.error('Failed to capture screenshot:', error);
-      setScreenshotError('Network error while capturing screenshot');
-    } finally {
-      setIsCapturingScreenshot(false);
-    }
-  };
 
   const handlePromptGeneration = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -4033,25 +4110,76 @@ Focus on the key sections and content, making it clean and modern while preservi
   };
 
     const handlePromptGenerationInternal = async () => {
-    console.log('[handlePromptGenerationInternal] Starting app generation with prompt:', promptInput);
+    try {
+      setIsGeneratingApp(true);
+      console.log('[handlePromptGenerationInternal] Starting app generation with prompt:', promptInput);
+      
+      // Check if user is logged in
+      if (!user) {
+        addChatMessage('❌ Please sign in to generate apps. You need AI Credits to use this feature.', 'system');
+        setShowLoginModal(true);
+        return;
+      }
+
+      // Check token balance before starting generation (but don't consume yet)
+      if (isTokenCheckEnabled) {
+        try {
+          // First, check if user has enough tokens
+          const estimatedTokens = Math.ceil(promptInput.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(promptInput.length / 4) + 800 + 2500) * 0.2);
+          addChatMessage(`💳 Estimating ${estimatedTokens.toLocaleString()} credits for this request...`, 'system');
+          
+          const response = await fetch('/api/tokens/check-balance', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              userId: user.uid,
+              requiredTokens: estimatedTokens,
+            }),
+          });
+
+          const data = await response.json();
+
+          if (!data.success) {
+            if (response.status === 402) {
+              // Insufficient tokens - show payment modal and stop generation
+              addChatMessage(`❌ Insufficient AI Credits! You have ${data.currentBalance} credits but need ${data.requiredTokens} credits to generate this app. Please purchase credits to continue.`, 'system');
+              setShowPaymentModal(true);
+              return;
+            } else if (response.status === 500 && data.error?.includes('Firebase not configured')) {
+              // Firebase not configured - show setup message and stop generation
+              addChatMessage(`❌ AI Credits system not configured. Please contact support to enable the credits system.`, 'system');
+              return;
+            } else {
+              addChatMessage(`❌ Error: ${data.error}`, 'system');
+              return;
+            }
+          }
+        } catch (error) {
+          console.error('Error checking token balance:', error);
+          addChatMessage('❌ AI Credits system unavailable. Please try again or contact support.', 'system');
+          return; // Stop generation if token system fails
+        }
+      }
+      
+      // Don't create GitHub repository here - we'll do it after sandbox is ready
+      console.log('[handlePromptGenerationInternal] Will create GitHub repository after sandbox is ready');
+      
+      setHomeScreenFading(true);
     
-    // Don't create GitHub repository here - we'll do it after sandbox is ready
-    console.log('[handlePromptGenerationInternal] Will create GitHub repository after sandbox is ready');
-    
-    setHomeScreenFading(true);
-    
-    // Clear messages and show generation message
-    setChatMessages([]);
-    addChatMessage(`Starting to generate app based on your prompt...`, 'system');
-    
-    // Start creating sandbox immediately
-    const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve();
-    
-    // Set loading stage immediately before hiding home screen
-    setLoadingStage('planning');
-    setActiveTab('preview');
-    
-    setTimeout(async () => {
+      // Clear messages and show generation message
+      setChatMessages([]);
+      addChatMessage(`Starting to generate app based on your prompt...`, 'system');
+      
+      // Start creating sandbox immediately
+      const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve();
+      
+      // Set loading stage immediately before hiding home screen
+      setLoadingStage('planning');
+      setActiveTab('preview');
+      
+      setTimeout(async () => {
       setShowHomeScreen(false);
       setHomeScreenFading(false);
       
@@ -4118,8 +4246,21 @@ Focus on the key sections and content, making it clean and modern while preservi
             
             for (const line of lines) {
               if (line.startsWith('data: ')) {
+                const jsonString = line.slice(6);
+                
+                // Validate JSON string before parsing
+                if (!jsonString.trim()) {
+                  console.warn('[initial-generation] Empty JSON string received, skipping');
+                  continue;
+                }
+                
+                // Check for unterminated strings or other JSON issues
+                if (jsonString.includes('\\') && !jsonString.includes('\\\\')) {
+                  console.warn('[initial-generation] Potential escape character issue in JSON:', jsonString.substring(0, 100));
+                }
+                
                 try {
-                  const data = JSON.parse(line.slice(6));
+                  const data = JSON.parse(jsonString);
                   
                   if (data.type === 'status') {
                     setGenerationProgress(prev => ({ ...prev, status: data.message }));
@@ -4163,8 +4304,107 @@ Focus on the key sections and content, making it clean and modern while preservi
                       currentComponent: prev.currentComponent + 1
                     }));
                   } else if (data.type === 'complete') {
+                    console.log('[initial-generation] Received completion event:', {
+                      hasGeneratedCode: !!data.generatedCode,
+                      hasExplanation: !!data.explanation,
+                      hasTokenUsage: !!data.tokenUsage,
+                      tokenUsage: data.tokenUsage
+                    });
+                    
                     generatedCode = data.generatedCode;
                     explanation = data.explanation;
+                    
+                    // Consume credits based on actual token usage from API response
+                    console.log('[initial-generation] Checking token usage data:', {
+                      hasTokenUsage: !!data.tokenUsage,
+                      tokenUsage: data.tokenUsage,
+                      user: !!user,
+                      isTokenCheckEnabled
+                    });
+                    
+                    if (data.tokenUsage && user && isTokenCheckEnabled) {
+                      try {
+                        console.log('[initial-generation] Token usage data structure:', {
+                          tokenUsage: data.tokenUsage,
+                          promptTokens: data.tokenUsage.promptTokens,
+                          completionTokens: data.tokenUsage.completionTokens,
+                          promptTokensType: typeof data.tokenUsage.promptTokens,
+                          completionTokensType: typeof data.tokenUsage.completionTokens
+                        });
+                        
+                        // Validate token usage data
+                        if (typeof data.tokenUsage.promptTokens !== 'number' || typeof data.tokenUsage.completionTokens !== 'number') {
+                          console.error('[initial-generation] Invalid token usage data:', data.tokenUsage);
+                          throw new Error('Invalid token usage data structure');
+                        }
+                        
+                        const actualTokens = data.tokenUsage.promptTokens + data.tokenUsage.completionTokens;
+                        
+                        console.log('[initial-generation] Actual token usage from API:', {
+                          promptTokens: data.tokenUsage.promptTokens,
+                          completionTokens: data.tokenUsage.completionTokens,
+                          totalTokens: actualTokens
+                        });
+                        
+                        // Consume the actual tokens used
+                        const consumeResponse = await fetch('/api/tokens/consume-actual', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({
+                            userId: user.uid,
+                            actualTokens,
+                            description: `AI Code Generation: "${promptInput.substring(0, 100)}${promptInput.length > 100 ? '...' : ''}"`
+                          }),
+                        });
+
+                        const consumeData = await consumeResponse.json();
+
+                        if (consumeData.success) {
+                          // Update token balance
+                          setTokenBalance(consumeData.remainingBalance);
+                          addChatMessage(`💳 AI Credits consumed: ${actualTokens.toLocaleString()} (actual usage). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                        } else {
+                          console.error('Failed to consume actual tokens:', consumeData.error);
+                          addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                        }
+                      } catch (error) {
+                        console.error('Error consuming actual tokens:', error);
+                        addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                      }
+                    } else if (isTokenCheckEnabled && user) {
+                      // Fallback: if no token usage data, use estimated consumption
+                      console.log('[initial-generation] No token usage data, using fallback estimated consumption');
+                      try {
+                        const estimatedTokens = Math.ceil(promptInput.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(promptInput.length / 4) + 800 + 2500) * 0.2);
+                        
+                        const consumeResponse = await fetch('/api/tokens/consume', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({
+                            userId: user.uid,
+                            prompt: promptInput,
+                          }),
+                        });
+
+                        const consumeData = await consumeResponse.json();
+
+                        if (consumeData.success) {
+                          // Update token balance
+                          setTokenBalance(consumeData.remainingBalance);
+                          addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()} (estimated). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                        } else {
+                          console.error('Failed to consume estimated tokens:', consumeData.error);
+                          addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                        }
+                      } catch (error) {
+                        console.error('Error consuming estimated tokens:', error);
+                        addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                      }
+                    }
                     
                     setConversationContext(prev => ({
                       ...prev,
@@ -4173,6 +4413,12 @@ Focus on the key sections and content, making it clean and modern while preservi
                   }
                 } catch (e) {
                   console.error('Error parsing streaming data:', e);
+                  console.error('Problematic JSON string:', jsonString);
+                  console.error('JSON string length:', jsonString.length);
+                  console.error('JSON string preview:', jsonString.substring(0, 200));
+                  
+                  // Try to recover by finding the next valid JSON
+                  continue;
                 }
               }
             }
@@ -4203,12 +4449,26 @@ Focus on the key sections and content, making it clean and modern while preservi
             'ai'
           );
           
+          // Add credit consumption summary
+          if (user && isTokenCheckEnabled) {
+            try {
+              const balanceResponse = await fetch(`/api/tokens/balance?userId=${user.uid}`);
+              const balanceData = await balanceResponse.json();
+              if (balanceData.success) {
+                addChatMessage(`✅ App generation completed! Current balance: ${balanceData.balance.tokens.toLocaleString()} credits`, 'system');
+              }
+            } catch (error) {
+              console.error('Failed to fetch updated balance:', error);
+            }
+          }
+          
           setPromptInput('');
           setShowPromptInput(false);
           setGenerationMode('clone');
           
           // Clear loading states
           setLoadingStage(null);
+          setIsGeneratingApp(false);
           
           setTimeout(() => {
             setActiveTab('preview');
@@ -4218,7 +4478,14 @@ Focus on the key sections and content, making it clean and modern while preservi
         }
         
       } catch (error: any) {
+        console.error('[handlePromptGenerationInternal] Error:', error);
         addChatMessage(`Failed to generate app: ${error.message}`, 'system');
+        
+        // Don't consume credits if generation failed
+        if (isTokenCheckEnabled && user) {
+          addChatMessage('💳 No credits consumed - generation failed', 'system');
+        }
+        
         setLoadingStage(null);
         setGenerationProgress(prev => ({
           ...prev,
@@ -4227,405 +4494,21 @@ Focus on the key sections and content, making it clean and modern while preservi
           status: ''
         }));
         setActiveTab('preview');
+        setIsGeneratingApp(false);
       }
-    }, 500);
-  };
-
-  const handleHomeScreenSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!homeUrlInput.trim()) return;
-    
-    requireAuth(() => {
-      handleHomeScreenSubmitInternal();
-    });
-  };
-
-  const handleHomeScreenSubmitInternal = async () => {
-    
-    setHomeScreenFading(true);
-    
-    // Clear messages and immediately show the cloning message
-    setChatMessages([]);
-    let displayUrl = homeUrlInput.trim();
-    if (!displayUrl.match(/^https?:\/\//i)) {
-      displayUrl = 'https://' + displayUrl;
-    }
-    // Remove protocol for cleaner display
-    const cleanUrl = displayUrl.replace(/^https?:\/\//i, '');
-    addChatMessage(`Starting to clone ${cleanUrl}...`, 'system');
-    
-    // Start creating sandbox and capturing screenshot immediately in parallel
-    const sandboxPromise = !sandboxData ? createSandbox(true) : Promise.resolve();
-    
-    // Only capture screenshot if we don't already have a sandbox (first generation)
-    // After sandbox is set up, skip the screenshot phase for faster generation
-    if (!sandboxData) {
-      captureUrlScreenshot(displayUrl);
-    }
-    
-    // Set loading stage immediately before hiding home screen
-    setLoadingStage('gathering');
-    // Also ensure we're on preview tab to show the loading overlay
-    setActiveTab('preview');
-    
-    setTimeout(async () => {
-      setShowHomeScreen(false);
+      }, 500);
+      
+    } catch (error: any) {
+      console.error('[handlePromptGenerationInternal] Outer error:', error);
+      addChatMessage(`Failed to start app generation: ${error.message}`, 'system');
+      setLoadingStage(null);
       setHomeScreenFading(false);
-      
-      // Wait for sandbox to be ready (if it's still creating)
-      await sandboxPromise;
-      
-      // Now start the clone process which will stream the generation
-      setUrlInput(homeUrlInput);
-      setUrlOverlayVisible(false); // Make sure overlay is closed
-      setUrlStatus(['Scraping website content...']);
-      
-      try {
-        // Scrape the website
-        let url = homeUrlInput.trim();
-        if (!url.match(/^https?:\/\//i)) {
-          url = 'https://' + url;
-        }
-        
-        // Screenshot is already being captured in parallel above
-        
-        const scrapeResponse = await fetch('/api/scrape-url-enhanced', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url })
-        });
-        
-        if (!scrapeResponse.ok) {
-          throw new Error('Failed to scrape website');
-        }
-        
-        const scrapeData = await scrapeResponse.json();
-        
-        if (!scrapeData.success) {
-          throw new Error(scrapeData.error || 'Failed to scrape website');
-        }
-        
-        setUrlStatus(['Website scraped successfully!', 'Generating React app...']);
-        
-        // Clear preparing design state and switch to generation tab
-        setIsPreparingDesign(false);
-        setUrlScreenshot(null); // Clear screenshot when starting generation
-        setTargetUrl(''); // Clear target URL
-        
-        // Update loading stage to planning
-        setLoadingStage('planning');
-        
-        // Brief pause before switching to generation tab
-        setTimeout(() => {
-          setLoadingStage('generating');
-          setActiveTab('generation');
-        }, 1500);
-        
-        // Store scraped data in conversation context
-        setConversationContext(prev => ({
-          ...prev,
-          scrapedWebsites: [...prev.scrapedWebsites, {
-            url: url,
-            content: scrapeData,
-            timestamp: new Date()
-          }],
-          currentProject: `${url} Clone`
-        }));
-        
-        const prompt = `I want to recreate the ${url} website as a complete React application based on the scraped content below.
-
-${JSON.stringify(scrapeData, null, 2)}
-
-${homeContextInput ? `ADDITIONAL CONTEXT/REQUIREMENTS FROM USER:
-${homeContextInput}
-
-Please incorporate these requirements into the design and implementation.` : ''}
-
-IMPORTANT INSTRUCTIONS:
-- Create a COMPLETE, working React application
-- Implement ALL sections and features from the original site
-- Use Tailwind CSS for all styling (no custom CSS files)
-- Make it responsive and modern
-- Ensure all text content matches the original
-- Create proper component structure
-- Make sure the app actually renders visible content
-- Create ALL components that you reference in imports
-${homeContextInput ? '- Apply the user\'s context/theme requirements throughout the application' : ''}
-
-Focus on the key sections and content, making it clean and modern.`;
-        
-        setGenerationProgress(prev => ({
-          isGenerating: true,
-          status: 'Initializing AI...',
-          components: [],
-          currentComponent: 0,
-          streamedCode: '',
-          isStreaming: true,
-          isThinking: false,
-          thinkingText: undefined,
-          thinkingDuration: undefined,
-          // Keep previous files until new ones are generated
-          files: prev.files || [],
-          currentFile: undefined,
-          lastProcessedPosition: 0
-        }));
-        
-        const aiResponse = await fetch('/api/generate-ai-code-stream', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            prompt,
-            model: aiModel,
-            context: {
-              sandboxId: sandboxData?.sandboxId,
-              structure: structureContent,
-              conversationContext: conversationContext
-            }
-          })
-        });
-        
-        if (!aiResponse.ok || !aiResponse.body) {
-          throw new Error('Failed to generate code');
-        }
-        
-        const reader = aiResponse.body.getReader();
-        const decoder = new TextDecoder();
-        let generatedCode = '';
-        let explanation = '';
-        
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          
-          const chunk = decoder.decode(value);
-          const lines = chunk.split('\n');
-          
-          for (const line of lines) {
-            if (line.startsWith('data: ')) {
-              try {
-                const data = JSON.parse(line.slice(6));
-                
-                if (data.type === 'status') {
-                  setGenerationProgress(prev => ({ ...prev, status: data.message }));
-                } else if (data.type === 'thinking') {
-                  setGenerationProgress(prev => ({ 
-                    ...prev, 
-                    isThinking: true,
-                    thinkingText: (prev.thinkingText || '') + data.text
-                  }));
-                } else if (data.type === 'thinking_complete') {
-                  setGenerationProgress(prev => ({ 
-                    ...prev, 
-                    isThinking: false,
-                    thinkingDuration: data.duration
-                  }));
-                } else if (data.type === 'conversation') {
-                  // Add conversational text to chat only if it's not code
-                  let text = data.text || '';
-                  
-                  // Remove package tags from the text
-                  text = text.replace(/<package>[^<]*<\/package>/g, '');
-                  text = text.replace(/<packages>[^<]*<\/packages>/g, '');
-                  
-                  // Filter out any XML tags and file content that slipped through
-                  if (!text.includes('<file') && !text.includes('import React') && 
-                      !text.includes('export default') && !text.includes('className=') &&
-                      text.trim().length > 0) {
-                    addChatMessage(text.trim(), 'ai');
-                  }
-                } else if (data.type === 'stream' && data.raw) {
-                  setGenerationProgress(prev => {
-                    const newStreamedCode = prev.streamedCode + data.text;
-                    
-                    // Tab is already switched after scraping
-                    
-                    const updatedState = { 
-                      ...prev, 
-                      streamedCode: newStreamedCode,
-                      isStreaming: true,
-                      isThinking: false,
-                      status: 'Generating code...'
-                    };
-                    
-                    // Process complete files from the accumulated stream
-                    const fileRegex = /<file path="([^"]+)">([^]*?)<\/file>/g;
-                    let match;
-                    const processedFiles = new Set(prev.files.map(f => f.path));
-                    
-                    while ((match = fileRegex.exec(newStreamedCode)) !== null) {
-                      const filePath = match[1];
-                      const fileContent = match[2];
-                      
-                      // Only add if we haven't processed this file yet
-                      if (!processedFiles.has(filePath)) {
-                        const fileExt = filePath.split('.').pop() || '';
-                        const fileType = fileExt === 'jsx' || fileExt === 'js' ? 'javascript' :
-                                        fileExt === 'css' ? 'css' :
-                                        fileExt === 'json' ? 'json' :
-                                        fileExt === 'html' ? 'html' : 'text';
-                        
-                        // Check if file already exists
-                        const existingFileIndex = updatedState.files.findIndex(f => f.path === filePath);
-                        
-                        if (existingFileIndex >= 0) {
-                          // Update existing file and mark as edited
-                          updatedState.files = [
-                            ...updatedState.files.slice(0, existingFileIndex),
-                            {
-                              ...updatedState.files[existingFileIndex],
-                              content: fileContent.trim(),
-                              type: fileType,
-                              completed: true,
-                              edited: true
-                            },
-                            ...updatedState.files.slice(existingFileIndex + 1)
-                          ];
-                        } else {
-                          // Add new file
-                          updatedState.files = [...updatedState.files, {
-                            path: filePath,
-                            content: fileContent.trim(),
-                            type: fileType,
-                            completed: true,
-                            edited: false
-                          }];
-                        }
-                        
-                        // Only show file status if not in edit mode
-                        if (!prev.isEdit) {
-                          updatedState.status = `Completed ${filePath}`;
-                        }
-                        processedFiles.add(filePath);
-                      }
-                    }
-                    
-                    // Check for current file being generated (incomplete file at the end)
-                    const lastFileMatch = newStreamedCode.match(/<file path="([^"]+)">([^]*?)$/);
-                    if (lastFileMatch && !lastFileMatch[0].includes('</file>')) {
-                      const filePath = lastFileMatch[1];
-                      const partialContent = lastFileMatch[2];
-                      
-                      if (!processedFiles.has(filePath)) {
-                        const fileExt = filePath.split('.').pop() || '';
-                        const fileType = fileExt === 'jsx' || fileExt === 'js' ? 'javascript' :
-                                        fileExt === 'css' ? 'css' :
-                                        fileExt === 'json' ? 'json' :
-                                        fileExt === 'html' ? 'html' : 'text';
-                        
-                        updatedState.currentFile = { 
-                          path: filePath, 
-                          content: partialContent, 
-                          type: fileType 
-                        };
-                        // Only show file status if not in edit mode
-                        if (!prev.isEdit) {
-                          updatedState.status = `Generating ${filePath}`;
-                        }
-                      }
-                    } else {
-                      updatedState.currentFile = undefined;
-                    }
-                    
-                    return updatedState;
-                  });
-                } else if (data.type === 'complete') {
-                  generatedCode = data.generatedCode;
-                  explanation = data.explanation;
-                  
-                  // Save the last generated code
-                  setConversationContext(prev => ({
-                    ...prev,
-                    lastGeneratedCode: generatedCode
-                  }));
-                }
-              } catch (e) {
-                console.error('Failed to parse SSE data:', e);
-              }
-            }
-          }
-        }
-        
-        setGenerationProgress(prev => ({
-          ...prev,
-          isGenerating: false,
-          isStreaming: false,
-          status: 'Generation complete!'
-        }));
-        
-        if (generatedCode) {
-          addChatMessage('AI recreation generated!', 'system');
-          
-          // Add the explanation to chat if available
-          if (explanation && explanation.trim()) {
-            addChatMessage(explanation, 'ai');
-          }
-          
-          setPromptInput(generatedCode);
-          
-          // First application for cloned site should not be in edit mode
-          await applyGeneratedCode(generatedCode, false);
-          
-          addChatMessage(
-            `Successfully recreated ${url} as a modern React app${homeContextInput ? ` with your requested context: "${homeContextInput}"` : ''}! The scraped content is now in my context, so you can ask me to modify specific sections or add features based on the original site.`, 
-            'ai',
-            {
-              scrapedUrl: url,
-              scrapedContent: scrapeData,
-              generatedCode: generatedCode
-            }
-          );
-          
-          setConversationContext(prev => ({
-            ...prev,
-            generatedComponents: [],
-            appliedCode: [...prev.appliedCode, {
-              files: [],
-              timestamp: new Date()
-            }]
-          }));
-        } else {
-          throw new Error('Failed to generate recreation');
-        }
-        
-        setUrlInput('');
-        setUrlStatus([]);
-        setHomeContextInput('');
-        
-        // Clear generation progress and all screenshot/design states
-        setGenerationProgress(prev => ({
-          ...prev,
-          isGenerating: false,
-          isStreaming: false,
-          status: 'Generation complete!'
-        }));
-        
-        // Clear screenshot and preparing design states to prevent them from showing on next run
-        setUrlScreenshot(null);
-        setIsPreparingDesign(false);
-        setTargetUrl('');
-        setScreenshotError(null);
-        setLoadingStage(null); // Clear loading stage
-        
-        setTimeout(() => {
-          // Switch back to preview tab but keep files
-          setActiveTab('preview');
-        }, 1000); // Show completion briefly then switch
-      } catch (error: any) {
-        addChatMessage(`Failed to clone website: ${error.message}`, 'system');
-        setUrlStatus([]);
-        setIsPreparingDesign(false);
-        // Also clear generation progress on error
-        setGenerationProgress(prev => ({
-          ...prev,
-          isGenerating: false,
-          isStreaming: false,
-          status: '',
-          // Keep files to display in sidebar
-          files: prev.files
-        }));
-      }
-    }, 500);
+      setActiveTab('preview');
+      setIsGeneratingApp(false);
+    }
   };
+
+
 
   return (
     <div className="font-sans bg-background text-foreground h-screen flex flex-col overflow-hidden">
@@ -4715,26 +4598,15 @@ Focus on the key sections and content, making it clean and modern.`;
                   {authLoading ? (
                     <div className="w-8 h-8 rounded-full bg-gray-700 animate-pulse"></div>
                   ) : user ? (
-                    <>
-                      <button 
-                        onClick={() => setShowMyApps(true)}
-                        className="text-white/80 hover:text-white transition-colors px-4 py-2 rounded-lg hover:bg-white/10"
-                      >
-                        My Apps
-                      </button>
-                      {mounted && (
-                        <button 
-                          onClick={() => setShowGitHubConnectionModal(true)}
-                          className="text-white/80 hover:text-white transition-colors px-4 py-2 rounded-lg hover:bg-white/10 flex items-center gap-2"
-                        >
-                          <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                            <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                          </svg>
-                          {githubConnected ? 'GitHub' : 'Connect GitHub'}
-                        </button>
-                      )}
-                      <UserProfile />
-                    </>
+                    <AccountMenu 
+                      user={user} 
+                      onSignOut={signOut}
+                      onRechargeClick={() => setShowPaymentModal(true)}
+                      onMyAppsClick={() => setShowMyApps(true)}
+                      onGitHubClick={() => setShowGitHubConnectionModal(true)}
+                      onAdminClick={() => window.open('/admin', '_blank')}
+                      githubConnected={githubConnected}
+                    />
                   ) : (
                     <>
                       <button 
@@ -4802,29 +4674,6 @@ Focus on the key sections and content, making it clean and modern.`;
                         <div className="w-8 h-8 rounded-full bg-gray-700 animate-pulse"></div>
                       ) : user ? (
                         <div className="space-y-3">
-                          <button 
-                            onClick={() => {
-                              setShowMyApps(true);
-                              setMobileMenuOpen(false);
-                            }}
-                            className="w-full text-left text-white/80 hover:text-white transition-colors py-2"
-                          >
-                            My Apps
-                          </button>
-                          {mounted && (
-                            <button 
-                              onClick={() => {
-                                setShowGitHubConnectionModal(true);
-                                setMobileMenuOpen(false);
-                              }}
-                              className="w-full text-left text-white/80 hover:text-white transition-colors py-2 flex items-center gap-2"
-                            >
-                              <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                              </svg>
-                              {githubConnected ? 'GitHub' : 'Connect GitHub'}
-                            </button>
-                          )}
                           <div className="pt-2">
                             {/* Mobile User Profile */}
                             <div className="flex items-center gap-3 p-3 bg-white/5 rounded-lg">
@@ -4850,22 +4699,64 @@ Focus on the key sections and content, making it clean and modern.`;
                                 </p>
                               </div>
                             </div>
-                            <button
-                              onClick={async () => {
-                                try {
-                                  await signOut();
+                            
+                            {/* Account Actions */}
+                            <div className="space-y-1 mt-2">
+                              <button
+                                onClick={() => {
+                                  setShowMyApps(true);
                                   setMobileMenuOpen(false);
-                                } catch (error) {
-                                  console.error('Failed to sign out:', error);
-                                }
-                              }}
-                              className="w-full text-left text-white/80 hover:text-white transition-colors py-2 flex items-center gap-2 mt-2"
-                            >
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
-                              </svg>
-                              Sign Out
-                            </button>
+                                }}
+                                className="w-full text-left text-white/80 hover:text-white transition-colors py-2 flex items-center gap-2"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5a2 2 0 012-2h4a2 2 0 012 2v2H8V5z" />
+                                </svg>
+                                My Apps
+                              </button>
+                              <button
+                                onClick={() => {
+                                  setShowGitHubConnectionModal(true);
+                                  setMobileMenuOpen(false);
+                                }}
+                                className="w-full text-left text-white/80 hover:text-white transition-colors py-2 flex items-center gap-2"
+                              >
+                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                  <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                                </svg>
+                                {githubConnected ? 'GitHub' : 'Connect GitHub'}
+                              </button>
+                              <button
+                                onClick={() => {
+                                  // TODO: Add settings functionality
+                                  setMobileMenuOpen(false);
+                                }}
+                                className="w-full text-left text-white/80 hover:text-white transition-colors py-2 flex items-center gap-2"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                                Settings
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  try {
+                                    await signOut();
+                                    setMobileMenuOpen(false);
+                                  } catch (error) {
+                                    console.error('Failed to sign out:', error);
+                                  }
+                                }}
+                                className="w-full text-left text-red-400 hover:text-red-300 transition-colors py-2 flex items-center gap-2"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+                                </svg>
+                                Sign Out
+                              </button>
+                            </div>
                           </div>
                         </div>
                       ) : (
@@ -4890,8 +4781,8 @@ Focus on the key sections and content, making it clean and modern.`;
                           </button>
                         </div>
                       )}
-                    </ClientOnly>
-                  </div>
+              </ClientOnly>
+            </div>
                 </motion.div>
               )}
             </AnimatePresence>
@@ -4922,88 +4813,12 @@ Focus on the key sections and content, making it clean and modern.`;
                 From concept to code in seconds. Experience the future of intelligent development with AI that understands your vision.
               </p>
               
-              {/* Generation Mode Toggle */}
-              <div className="mb-8 flex justify-center">
-                <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-1">
-                  <div className="flex">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGenerationMode('clone');
-                        setShowStyleSelector(false);
-                        setSelectedStyle(null);
-                        setShowPromptInput(false);
-                      }}
-                      className={`px-6 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
-                        generationMode === 'clone'
-                          ? 'bg-gradient-to-r from-orange-500 to-green-500 text-white shadow-lg'
-                          : 'text-white/80 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      Clone Website
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setGenerationMode('prompt');
-                        setShowStyleSelector(false);
-                        setSelectedStyle(null);
-                        setShowPromptInput(true);
-                      }}
-                      className={`px-6 py-3 rounded-lg text-sm font-medium transition-all duration-200 ${
-                        generationMode === 'prompt'
-                          ? 'bg-gradient-to-r from-orange-500 to-green-500 text-white shadow-lg'
-                          : 'text-white/80 hover:text-white hover:bg-white/10'
-                      }`}
-                    >
-                      Generate from Prompt
-                    </button>
-                  </div>
-                </div>
-              </div>
+
 
 
 
               {/* Input Form */}
               <div className="max-w-3xl mx-auto w-full px-4 sm:px-6">
-                {generationMode === 'clone' && (
-                  <form onSubmit={handleHomeScreenSubmit} className="relative">
-                    <div className="relative">
-                      <input
-                        type="text"
-                        value={homeUrlInput}
-                        onChange={(e) => {
-                          const value = e.target.value;
-                          setHomeUrlInput(value);
-                          
-                          // Check if it's a valid domain
-                          const domainRegex = /^(https?:\/\/)?(([a-zA-Z0-9-]+\.)+[a-zA-Z]{2,})(\/?.*)?$/;
-                          if (domainRegex.test(value) && value.length > 5) {
-                            setTimeout(() => setShowStyleSelector(true), 100);
-                          } else {
-                            setShowStyleSelector(false);
-                            setSelectedStyle(null);
-                          }
-                        }}
-                        placeholder="https://codebharat.dev"
-                        className="w-full h-14 px-6 pr-20 bg-white/10 backdrop-blur-sm border border-white/20 rounded-2xl text-white placeholder-white/60 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all duration-200"
-                        autoFocus
-                      />
-                      <button
-                        type="submit"
-                        disabled={!homeUrlInput.trim()}
-                        className="absolute right-3 top-1/2 transform -translate-y-1/2 bg-gradient-to-r from-orange-500 to-green-500 text-white p-3 rounded-xl hover:shadow-lg transition-all duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center justify-center"
-                        title="Generate"
-                      >
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                        </svg>
-                      </button>
-                    </div>
-                  </form>
-                )}
-
-                {generationMode === 'prompt' && (
                   <form onSubmit={handlePromptGeneration} className="relative">
                     <div className="relative">
                       <textarea
@@ -5016,103 +4831,23 @@ Focus on the key sections and content, making it clean and modern.`;
                       />
                       <button
                         type="submit"
-                        disabled={!promptInput.trim()}
+                        disabled={!promptInput.trim() || isGeneratingApp}
                         className="absolute right-3 top-1/2 transform -translate-y-1/2 bg-gradient-to-r from-orange-500 to-green-500 text-white p-3 rounded-xl hover:shadow-lg transition-all duration-200 hover:scale-105 disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:scale-100 flex items-center justify-center"
-                        title="Generate"
+                        title={isGeneratingApp ? "Generating..." : "Generate"}
                       >
-                        <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
-                        </svg>
+                        {isGeneratingApp ? (
+                          <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 19l9 2-9-18-9 18 9-2zm0 0v-8" />
+                          </svg>
+                        )}
                       </button>
                     </div>
                   </form>
-                )}
                 
                 {/* Compact Style Selector */}
-                {showStyleSelector && (
-                  <div className="overflow-hidden mt-4">
-                    <div className={`transition-all duration-300 ease-out transform ${
-                      showStyleSelector ? 'translate-y-0 opacity-100' : '-translate-y-2 opacity-0'
-                    }`}>
-                      <div className="bg-white/10 backdrop-blur-sm border border-white/20 rounded-xl p-3">
-                        <div className="flex items-center justify-between mb-3">
-                          <p className="text-white/80 text-sm font-medium">Style:</p>
-                          <div className="flex flex-wrap gap-1">
-                            {[
-                              { name: 'Modern', icon: '🎨' },
-                              { name: 'Dark', icon: '🌙' },
-                              { name: 'Minimal', icon: '⚪' },
-                              { name: 'Gradient', icon: '🌈' },
-                              { name: 'Retro', icon: '📺' },
-                              { name: 'Glass', icon: '💎' }
-                            ].map((style) => (
-                              <button
-                                key={style.name}
-                                type="button"
-                                onClick={() => {
-                                  if (selectedStyle === style.name) {
-                                    setSelectedStyle(null);
-                                    const currentAdditional = homeContextInput.replace(/^[^,]+theme\s*,?\s*/, '').trim();
-                                    setHomeContextInput(currentAdditional);
-                                  } else {
-                                    setSelectedStyle(style.name);
-                                    const currentAdditional = homeContextInput.replace(/^[^,]+theme\s*,?\s*/, '').trim();
-                                    setHomeContextInput(style.name.toLowerCase() + ' theme' + (currentAdditional ? ', ' + currentAdditional : ''));
-                                  }
-                                }}
-                                className={`px-2 py-1 rounded-lg text-xs transition-all ${
-                                  selectedStyle === style.name
-                                    ? 'bg-orange-500 text-white shadow-sm'
-                                    : 'bg-white/10 text-white/70 hover:bg-white/20 hover:text-white'
-                                }`}
-                                title={style.name}
-                              >
-                                <span className="mr-1">{style.icon}</span>
-                                {style.name}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        
-                        {/* Compact additional context input */}
-                        <div className="flex gap-2">
-                          <input
-                            type="text"
-                            value={(() => {
-                              if (!selectedStyle) return homeContextInput;
-                              const additional = homeContextInput.replace(new RegExp('^' + selectedStyle.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + ' theme\\s*,?\\s*', 'i'), '');
-                              return additional;
-                            })()}
-                            onChange={(e) => {
-                              const additionalContext = e.target.value;
-                              if (selectedStyle) {
-                                setHomeContextInput(selectedStyle.toLowerCase() + ' theme' + (additionalContext.trim() ? ', ' + additionalContext : ''));
-                              } else {
-                                setHomeContextInput(additionalContext);
-                              }
-                            }}
-                            placeholder="Add features, colors, or preferences..."
-                            className="flex-1 px-3 py-2 bg-white/10 border border-white/20 rounded-lg text-white placeholder-white/50 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:border-transparent transition-all duration-200 text-sm"
-                          />
-                          {selectedStyle && (
-                            <button
-                              type="button"
-                              onClick={() => {
-                                setSelectedStyle(null);
-                                const currentAdditional = homeContextInput.replace(/^[^,]+theme\s*,?\s*/, '').trim();
-                                setHomeContextInput(currentAdditional);
-                              }}
-                              className="px-3 py-2 bg-red-500/20 text-red-300 hover:bg-red-500/30 rounded-lg transition-colors text-sm"
-                              title="Clear style"
-                            >
-                              ✕
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
+
               </div>
               
               {/* Watch Demo Button */}
@@ -5140,9 +4875,24 @@ Focus on the key sections and content, making it clean and modern.`;
           <h1 className="text-base sm:text-lg font-semibold text-[#36322F] truncate">CodeBharat.dev</h1>
         </div>
         <div className="flex items-center gap-1 sm:gap-2 flex-shrink-0">
+          {/* Credits Display */}
+          {user && mounted && tokenBalance !== null ? (
+            <div className="inline-flex items-center gap-1 sm:gap-2 bg-gradient-to-r from-orange-500 to-green-500 text-white px-2 sm:px-3 py-1.5 rounded-[10px] text-xs sm:text-sm font-medium [box-shadow:inset_0px_-2px_0px_0px_#171310,_0px_1px_6px_0px_rgba(58,_33,_8,_58%)]">
+              <span className="hidden sm:inline">💳 {tokenBalance.toLocaleString()}</span>
+              <span className="sm:hidden">💳 {tokenBalance.toLocaleString()}</span>
+            </div>
+          ) : user && mounted ? (
+            <div className="inline-flex items-center gap-1 sm:gap-2 bg-gradient-to-r from-orange-500 to-green-500 text-white px-2 sm:px-3 py-1.5 rounded-[10px] text-xs sm:text-sm font-medium [box-shadow:inset_0px_-2px_0px_0px_#171310,_0px_1px_6px_0px_rgba(58,_33,_8,_58%)]">
+              <span className="hidden sm:inline">💳 ...</span>
+              <span className="sm:hidden">💳 ...</span>
+            </div>
+          ) : null}
+          
+
+          
           {/* Status indicator */}
           <div className="inline-flex items-center gap-1 sm:gap-2 bg-[#36322F] text-white px-2 sm:px-3 py-1.5 rounded-[10px] text-xs sm:text-sm font-medium [box-shadow:inset_0px_-2px_0px_0px_#171310,_0px_1px_6px_0px_rgba(58,_33,_8,_58%)]">
-            <span id="status-text" className="hidden sm:inline">{status.text}</span>
+            <span className="hidden sm:inline">{mounted ? status.text : 'Loading...'}</span>
             <div className={`w-2 h-2 rounded-full ${status.active ? 'bg-green-500' : 'bg-gray-500'}`} />
           </div>
         </div>
@@ -5192,12 +4942,8 @@ Focus on the key sections and content, making it clean and modern.`;
                     updateStatus('Not connected', false);
                     
                     // Clear all input fields
-                    setHomeUrlInput('');
-                    setHomeContextInput('');
                     setPromptInput('');
                     setAiChatInput('');
-                    setUrlInput('');
-                    setUrlStatus([]);
                     
                     // Clear chat messages except the welcome message
                     setChatMessages([
@@ -5225,47 +4971,7 @@ Focus on the key sections and content, making it clean and modern.`;
             </div>
           </div>
 
-          {/* Scraped Websites Info */}
-          {conversationContext.scrapedWebsites.length > 0 && (
-            <div className="p-3 bg-gradient-to-r from-blue-50 to-purple-50 border-b border-gray-200">
-              <div className="flex items-center gap-2 mb-2">
-                <svg className="w-4 h-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9v-9m0-9v9" />
-                </svg>
-                <span className="text-xs font-medium text-gray-700">Source Website</span>
-              </div>
-              <div className="flex flex-col gap-1">
-                {conversationContext.scrapedWebsites.map((site, idx) => {
-                  const metadata = site.content?.metadata || {};
-                  const sourceURL = metadata.sourceURL || site.url;
-                  const favicon = metadata.favicon || `https://www.google.com/s2/favicons?domain=${new URL(sourceURL).hostname}&sz=32`;
-                  const siteName = metadata.ogSiteName || metadata.title || new URL(sourceURL).hostname;
-                  
-                  return (
-                    <div key={idx} className="flex items-center gap-2 p-2 bg-white rounded-lg border border-gray-200">
-                      <img 
-                        src={favicon} 
-                        alt={siteName}
-                        className="w-4 h-4 rounded"
-                        onError={(e) => {
-                          e.currentTarget.src = `https://www.google.com/s2/favicons?domain=${new URL(sourceURL).hostname}&sz=32`;
-                        }}
-                      />
-                      <a 
-                        href={sourceURL} 
-                        target="_blank" 
-                        rel="noopener noreferrer"
-                        className="text-xs text-gray-700 hover:text-blue-600 truncate flex-1"
-                        title={sourceURL}
-                      >
-                        {siteName}
-                      </a>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          )}
+
 
           {/* Chat Messages */}
           <div className="flex-1 overflow-y-auto p-2 sm:p-3 flex flex-col gap-2 scrollbar-hide min-h-0" ref={chatMessagesRef} style={{ minHeight: 0 }}>
@@ -5579,116 +5285,433 @@ Focus on the key sections and content, making it clean and modern.`;
 
 
 
-      {/* My Apps Modal */}
-      {showMyApps && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg p-6 w-full max-w-4xl mx-4 max-h-[80vh] overflow-hidden flex flex-col">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="text-xl font-semibold">My Apps</h3>
+      {/* Credit History Modal */}
+      {showCreditHistory && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl w-full max-w-4xl mx-auto max-h-[90vh] overflow-hidden flex flex-col border border-white/20"
+          >
+            {/* Header */}
+            <div className="flex justify-between items-center p-6 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-orange-500 to-red-600 rounded-xl flex items-center justify-center">
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
+                    Credit History
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    Complete transparency of your credit usage
+                  </p>
+                </div>
+              </div>
               <button
-                onClick={() => setShowMyApps(false)}
-                className="p-2 text-gray-500 hover:text-gray-700"
+                onClick={() => {
+                  setShowCreditHistory(false);
+                  setCreditHistory([]);
+                }}
+                className="w-10 h-10 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center transition-all duration-200 group"
               >
-                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg className="w-5 h-5 text-gray-500 group-hover:text-gray-700 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
                 </svg>
               </button>
             </div>
             
-            <div className="flex-1 overflow-y-auto">
-              {savedApps.length === 0 ? (
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {creditHistory.length === 0 ? (
                 <div className="text-center py-12">
                   <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
                     <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
                     </svg>
                   </div>
-                  <h4 className="text-lg font-medium text-gray-900 mb-2">No apps yet</h4>
-                  <p className="text-gray-500 mb-4">Generate your first app to see it here</p>
-                  <button
-                    onClick={() => setShowMyApps(false)}
-                    className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 transition-colors"
-                  >
-                    Start Creating
-                  </button>
+                  <h4 className="text-lg font-medium text-gray-900 mb-2">No Credit History</h4>
+                  <p className="text-gray-500">Your credit consumption history will appear here</p>
                 </div>
               ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {savedApps.map((app) => (
-                    <div key={app.id} className="border rounded-lg p-4 hover:shadow-md transition-shadow">
-                      <div className="flex justify-between items-start mb-3">
-                        <h4 className="font-medium text-gray-900 truncate flex-1">{app.name}</h4>
-                        <div className="flex gap-1">
-                          <button
-                            onClick={() => {
-                              loadSavedApp(app.id);
-                              setShowMyApps(false);
-                            }}
-                            disabled={loadingAppId === app.id}
-                            className={`p-1 ${loadingAppId === app.id ? 'text-gray-400 cursor-not-allowed' : 'text-blue-600 hover:text-blue-700'}`}
-                            title={loadingAppId === app.id ? 'Loading...' : 'Load app'}
-                          >
-                            {loadingAppId === app.id ? (
-                              <svg className="w-4 h-4 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                              </svg>
-                            ) : (
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
-                              </svg>
-                            )}
-                          </button>
+                <div className="space-y-4">
+                  {creditHistory.map((record, index) => (
+                    <div key={record.id} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
+                      <div className="flex justify-between items-start mb-2">
+                        <div className="flex-1">
+                          <h4 className="font-semibold text-gray-900">{record.operation}</h4>
+                          <p className="text-sm text-gray-500">
+                            {new Date(record.timestamp).toLocaleString()}
+                          </p>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-lg font-bold text-red-600">
+                            -{record.creditsConsumed.toLocaleString()}
+                          </div>
+                          <div className="text-xs text-gray-500">
+                            Balance: {record.balanceAfter.toLocaleString()}
+                          </div>
                         </div>
                       </div>
-                      <p className="text-sm text-gray-600 mb-3 line-clamp-2">{app.description || 'No description'}</p>
-                      
-                      {/* GitHub Repository Info */}
-                      {app.githubRepo && (
-                        <div className="mb-2">
-                          <a
-                            href={app.githubRepoUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="text-xs text-green-600 hover:text-green-700 inline-flex items-center gap-1"
-                          >
-                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                              <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
-                            </svg>
-                            {app.githubRepo}
-                          </a>
+                      {record.details && Object.keys(record.details).length > 0 && (
+                        <div className="mt-2 pt-2 border-t border-gray-200">
+                          <div className="text-xs text-gray-600">
+                            {Object.entries(record.details).map(([key, value]) => (
+                              <div key={key} className="flex justify-between">
+                                <span className="capitalize">{key}:</span>
+                                <span>{String(value)}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      )}
-                      
-                      {/* Sandbox ID */}
-                      {app.sandboxId && (
-                        <div className="text-xs text-gray-500 mb-2">
-                          Sandbox: {app.sandboxId.substring(0, 8)}...
-                        </div>
-                      )}
-                      
-                      <div className="text-xs text-gray-500">
-                        {formatDate(app.updatedAt)}
-                      </div>
-                      
-                      {/* Preview Link */}
-                      {app.previewUrl && (
-                        <a
-                          href={app.previewUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-blue-600 hover:text-blue-700 mt-2 inline-block"
-                        >
-                          View Live Preview →
-                        </a>
                       )}
                     </div>
                   ))}
                 </div>
               )}
             </div>
-          </div>
+          </motion.div>
         </div>
       )}
+
+      {/* My Apps Modal - Modern Redesign */}
+      {showMyApps && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95, y: 20 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.95, y: 20 }}
+            transition={{ duration: 0.2, ease: "easeOut" }}
+            className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-2xl w-full max-w-6xl mx-auto max-h-[90vh] overflow-hidden flex flex-col border border-white/20"
+          >
+            {/* Header */}
+            <div className="flex justify-between items-center p-6 border-b border-gray-100">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-xl flex items-center justify-center">
+                  <svg className="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                  </svg>
+                </div>
+                <div>
+                  <h3 className="text-2xl font-bold bg-gradient-to-r from-gray-900 to-gray-600 bg-clip-text text-transparent">
+                    My Apps
+                  </h3>
+                  <p className="text-sm text-gray-500 mt-1">
+                    {savedApps.length} {savedApps.length === 1 ? 'app' : 'apps'} created
+                    {(() => {
+                      const totalCredits = savedApps.reduce((sum, app) => sum + (app.creditsConsumed || 0), 0);
+                      return totalCredits > 0 ? ` • ${totalCredits.toLocaleString()} total credits used` : '';
+                    })()}
+                  </p>
+                  <button
+                    onClick={async () => {
+                      setShowCreditHistory(true);
+                      await fetchCreditHistory();
+                    }}
+                    className="text-xs text-blue-600 hover:text-blue-800 transition-colors mt-1"
+                  >
+                    View Credit History →
+                  </button>
+                </div>
+              </div>
+              <button
+                onClick={() => {
+                  setShowMyApps(false);
+                  setMyAppsSearchTerm('');
+                  setMyAppsFilter('all');
+                }}
+                className="w-10 h-10 rounded-xl bg-gray-50 hover:bg-gray-100 flex items-center justify-center transition-all duration-200 group"
+              >
+                <svg className="w-5 h-5 text-gray-500 group-hover:text-gray-700 transition-colors" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            {/* Search and Filter Bar */}
+            {savedApps.length > 0 && (
+              <div className="px-6 py-4 border-b border-gray-100">
+                <div className="flex flex-col sm:flex-row gap-4">
+                  {/* Search Input */}
+                  <div className="flex-1 relative">
+                    <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                      <svg className="h-5 w-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                      </svg>
+                    </div>
+                    <input
+                      type="text"
+                      placeholder="Search your apps..."
+                      value={myAppsSearchTerm}
+                      onChange={(e) => setMyAppsSearchTerm(e.target.value)}
+                      className="block w-full pl-10 pr-3 py-2 border border-gray-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent bg-gray-50 hover:bg-white transition-colors"
+                    />
+                  </div>
+                  
+                  {/* Filter Buttons */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setMyAppsFilter('all')}
+                      className={`px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
+                        myAppsFilter === 'all'
+                          ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      All Apps
+                    </button>
+                    <button
+                      onClick={() => setMyAppsFilter('recent')}
+                      className={`px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
+                        myAppsFilter === 'recent'
+                          ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      Recent
+                    </button>
+                    <button
+                      onClick={() => setMyAppsFilter('github')}
+                      className={`px-4 py-2 rounded-xl text-sm font-medium transition-all duration-200 ${
+                        myAppsFilter === 'github'
+                          ? 'bg-blue-100 text-blue-700 border border-blue-200'
+                          : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                      }`}
+                    >
+                      GitHub
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+            
+            {/* Content */}
+            <div className="flex-1 overflow-y-auto p-6">
+              {savedApps.length === 0 ? (
+                <motion.div 
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="text-center py-16"
+                >
+                  <div className="w-24 h-24 bg-gradient-to-br from-blue-50 to-purple-50 rounded-3xl flex items-center justify-center mx-auto mb-6">
+                    <svg className="w-12 h-12 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                  </div>
+                  <h4 className="text-2xl font-bold text-gray-900 mb-3">Start Building Amazing Apps</h4>
+                  <p className="text-gray-600 mb-8 max-w-md mx-auto">
+                    Create your first AI-powered application and watch it appear here. Each app you build gets saved automatically.
+                  </p>
+                  <button
+                    onClick={() => {
+                      setShowMyApps(false);
+                      setMyAppsSearchTerm('');
+                      setMyAppsFilter('all');
+                    }}
+                    className="px-8 py-4 bg-gradient-to-r from-blue-600 to-purple-600 text-white rounded-xl hover:from-blue-700 hover:to-purple-700 transition-all duration-200 font-semibold shadow-lg hover:shadow-xl transform hover:-translate-y-0.5"
+                  >
+                    Create Your First App
+                  </button>
+                </motion.div>
+              ) : (
+                (() => {
+                  // Filter and search logic
+                  let filteredApps = savedApps;
+                  
+                  // Apply search filter
+                  if (myAppsSearchTerm) {
+                    filteredApps = filteredApps.filter(app =>
+                      app.name.toLowerCase().includes(myAppsSearchTerm.toLowerCase()) ||
+                      app.description?.toLowerCase().includes(myAppsSearchTerm.toLowerCase()) ||
+                      app.githubRepo?.toLowerCase().includes(myAppsSearchTerm.toLowerCase())
+                    );
+                  }
+                  
+                  // Apply category filter
+                  if (myAppsFilter === 'recent') {
+                    const oneWeekAgo = new Date();
+                    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+                    filteredApps = filteredApps.filter(app => {
+                      const appDate = new Date(app.updatedAt);
+                      return appDate > oneWeekAgo;
+                    });
+                  } else if (myAppsFilter === 'github') {
+                    filteredApps = filteredApps.filter(app => app.githubRepo);
+                  }
+                  
+                  if (filteredApps.length === 0) {
+                    return (
+                      <div className="text-center py-12">
+                        <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
+                          <svg className="w-8 h-8 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                          </svg>
+                        </div>
+                        <h4 className="text-lg font-medium text-gray-900 mb-2">
+                          {myAppsSearchTerm ? 'No apps found' : 'No apps in this category'}
+                        </h4>
+                        <p className="text-gray-500">
+                          {myAppsSearchTerm 
+                            ? `No apps match "${myAppsSearchTerm}"`
+                            : myAppsFilter === 'recent' 
+                              ? 'No apps created in the last 7 days'
+                              : 'No apps with GitHub repositories'
+                          }
+                        </p>
+                      </div>
+                    );
+                  }
+                  
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                      {filteredApps.map((app, index) => (
+                        <motion.div 
+                          key={app.id}
+                          initial={{ opacity: 0, y: 20 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          transition={{ delay: index * 0.1 }}
+                          className="group relative bg-white rounded-2xl border border-gray-100 hover:border-gray-200 transition-all duration-300 hover:shadow-xl hover:-translate-y-1 overflow-hidden"
+                        >
+                          {/* App Card Header */}
+                          <div className="p-6 pb-4">
+                            <div className="flex justify-between items-start mb-4">
+                              <div className="flex-1 min-w-0">
+                                <h4 className="font-bold text-gray-900 truncate text-lg group-hover:text-blue-600 transition-colors">
+                                  {app.name}
+                                </h4>
+                                <p className="text-sm text-gray-500 mt-1">
+                                  {formatDate(app.updatedAt)}
+                                </p>
+                              </div>
+                              <div className="flex gap-2">
+                                {/* Open Button */}
+                                <button
+                                  onClick={() => {
+                                    loadSavedApp(app.id);
+                                    setShowMyApps(false);
+                                  }}
+                                  disabled={loadingAppId === app.id}
+                                  className={`w-10 h-10 rounded-xl flex items-center justify-center transition-all duration-200 ${
+                                    loadingAppId === app.id 
+                                      ? 'bg-gray-100 text-gray-400 cursor-not-allowed' 
+                                      : 'bg-blue-50 text-blue-600 hover:bg-blue-100 hover:scale-105'
+                                  }`}
+                                  title={loadingAppId === app.id ? 'Loading...' : 'Open app'}
+                                >
+                                  {loadingAppId === app.id ? (
+                                    <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                    </svg>
+                                  ) : (
+                                    <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                                    </svg>
+                                  )}
+                                </button>
+                              </div>
+                            </div>
+                            
+                            {/* Description */}
+                            <p className="text-sm text-gray-600 line-clamp-3 leading-relaxed">
+                              {app.description || 'No description available'}
+                            </p>
+                          </div>
+                          
+                          {/* App Card Footer */}
+                          <div className="px-6 pb-6">
+                            {/* GitHub Repository Info */}
+                            {app.githubRepo && (
+                              <div className="mb-3">
+                                <a
+                                  href={app.githubRepoUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center gap-2 px-3 py-2 bg-green-50 text-green-700 rounded-lg hover:bg-green-100 transition-colors text-sm font-medium"
+                                >
+                                  <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24">
+                                    <path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z"/>
+                                  </svg>
+                                  {app.githubRepo}
+                                </a>
+                              </div>
+                            )}
+                            
+                            {/* Credits Consumed Info */}
+                            {app.creditsConsumed && app.creditsConsumed > 0 && (
+                              <div className="mb-3">
+                                <div className="inline-flex items-center gap-2 px-3 py-2 bg-orange-50 text-orange-700 rounded-lg text-sm font-medium">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
+                                  </svg>
+                                  {app.creditsConsumed.toLocaleString()} credits used
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Sandbox ID */}
+                            {app.sandboxId && (
+                              <div className="mb-3">
+                                <div className="inline-flex items-center gap-2 px-3 py-2 bg-gray-50 text-gray-600 rounded-lg text-sm font-mono">
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 12h14M5 12a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v4a2 2 0 01-2 2M5 12a2 2 0 00-2 2v4a2 2 0 002 2h14a2 2 0 002-2v-4a2 2 0 00-2-2m-2-4h.01M17 16h.01" />
+                                  </svg>
+                                  {app.sandboxId.substring(0, 8)}...
+                                </div>
+                              </div>
+                            )}
+                            
+                            {/* Action Buttons */}
+                            <div className="flex gap-2">
+                              {/* Preview Link */}
+                              {app.previewUrl && (
+                                <a
+                                  href={app.previewUrl}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-blue-50 text-blue-600 rounded-lg hover:bg-blue-100 transition-colors text-sm font-medium"
+                                >
+                                  <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                                  </svg>
+                                  Preview
+                                </a>
+                              )}
+                              
+                              {/* Open Button */}
+                              <button
+                                onClick={() => {
+                                  loadSavedApp(app.id);
+                                  setShowMyApps(false);
+                                }}
+                                disabled={loadingAppId === app.id}
+                                className="flex-1 flex items-center justify-center gap-2 px-4 py-2 bg-gray-50 text-gray-600 rounded-lg hover:bg-gray-100 transition-colors text-sm font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Open app with full features"
+                              >
+                                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                                Edit
+                              </button>
+                            </div>
+                          </div>
+                          
+                          {/* Hover Effect Overlay */}
+                          <div className="absolute inset-0 bg-gradient-to-r from-blue-500/5 to-purple-500/5 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none" />
+                        </motion.div>
+                      ))}
+                    </div>
+                  );
+                })()
+              )}
+      </div>
+    </motion.div>
+  </div>
+)}
 
 
 
@@ -6094,6 +6117,20 @@ Focus on the key sections and content, making it clean and modern.`;
             </div>
           </div>
         </div>
+      )}
+
+      {/* Payment Modal */}
+      {user && (
+        <PaymentModal
+          isOpen={showPaymentModal}
+          onClose={() => setShowPaymentModal(false)}
+          userId={user.uid}
+          onPaymentSuccess={() => {
+            setShowPaymentModal(false);
+            // Refresh token balance
+            // The TokenBalance component will automatically refresh
+          }}
+        />
       )}
 
     </div>

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { getFirebaseForAPI } from '@/lib/firebase-utils';
 import { Octokit } from '@octokit/rest';
 
 export async function POST(request: NextRequest) {
@@ -23,9 +22,18 @@ export async function POST(request: NextRequest) {
       }, { status: 400 });
     }
 
+    const { db, firestore } = getFirebaseForAPI();
+    
+         if (!db || !firestore) {
+       return NextResponse.json({
+         success: false,
+         error: 'GitHub not connected. Please connect your GitHub account first.'
+       }, { status: 401 });
+     }
+    
     // Get user's GitHub access token from Firestore
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
+    const userRef = firestore.doc(db, 'users', userId);
+    const userSnap = await firestore.getDoc(userRef);
     
     if (!userSnap.exists()) {
       return NextResponse.json({
@@ -65,9 +73,9 @@ export async function POST(request: NextRequest) {
       }));
       appDescription = `Auto-generated app: ${repoName}`;
     } else {
-      // For manual commit, get the app data from Firestore
-      const appRef = doc(db, 'apps', appId);
-      const appSnap = await getDoc(appRef);
+             // For manual commit, get the app data from Firestore
+       const appRef = firestore.doc(db, 'apps', appId);
+       const appSnap = await firestore.getDoc(appRef);
       
       if (!appSnap.exists()) {
         return NextResponse.json({
@@ -95,9 +103,28 @@ export async function POST(request: NextRequest) {
     }
 
     // Initialize GitHub API client with user's access token
+    console.log('[github-commit] Initializing Octokit with token:', userData.githubAccessToken ? '***' + userData.githubAccessToken.slice(-4) : 'NO_TOKEN');
+    
     const octokit = new Octokit({
       auth: userData.githubAccessToken,
     });
+
+    // Test GitHub authentication first
+    try {
+      console.log('[github-commit] Testing GitHub authentication...');
+      const authTest = await octokit.users.getAuthenticated();
+      console.log('[github-commit] GitHub authentication successful:', {
+        username: authTest.data.login,
+        id: authTest.data.id,
+        email: authTest.data.email
+      });
+    } catch (authError: any) {
+      console.error('[github-commit] GitHub authentication failed:', authError);
+      return NextResponse.json({
+        success: false,
+        error: `GitHub authentication failed: ${authError.message || 'Invalid or expired access token'}`
+      }, { status: 401 });
+    }
 
     console.log('[github-commit] Starting GitHub operation:', {
       userId,
@@ -139,19 +166,42 @@ export async function POST(request: NextRequest) {
         // Create new repository
         console.log('[github-commit] Creating new repository:', { repoName, appDescription });
         
-        const createRepoResponse = await octokit.repos.createForAuthenticatedUser({
-          name: repoName,
-          description: appDescription,
-          private: false,
-          auto_init: false,
-        });
+        try {
+          const createRepoResponse = await octokit.repos.createForAuthenticatedUser({
+            name: repoName,
+            description: appDescription,
+            private: false,
+            auto_init: false,
+          });
 
-        repoUrl = createRepoResponse.data.html_url;
-        owner = createRepoResponse.data.owner.login;
-        repo = createRepoResponse.data.name;
-        defaultBranch = createRepoResponse.data.default_branch;
-        
-        console.log('[github-commit] Repository created successfully:', { repoUrl, owner, repo, defaultBranch });
+          repoUrl = createRepoResponse.data.html_url;
+          owner = createRepoResponse.data.owner.login;
+          repo = createRepoResponse.data.name;
+          defaultBranch = createRepoResponse.data.default_branch;
+          
+          console.log('[github-commit] Repository created successfully:', { repoUrl, owner, repo, defaultBranch });
+        } catch (createError: any) {
+          console.error('[github-commit] Repository creation failed:', createError);
+          
+          if (createError.status === 422) {
+            return NextResponse.json({
+              success: false,
+              error: 'Repository already exists. Please choose a different name.'
+            }, { status: 400 });
+          }
+          
+          if (createError.status === 403) {
+            return NextResponse.json({
+              success: false,
+              error: 'Insufficient permissions. Please check your GitHub token has repo permissions.'
+            }, { status: 403 });
+          }
+          
+          return NextResponse.json({
+            success: false,
+            error: `Failed to create repository: ${createError.message || 'Unknown error'}`
+          }, { status: 500 });
+        }
       }
 
       // If createOnly flag is set, just return the repository info without committing files

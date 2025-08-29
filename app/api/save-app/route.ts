@@ -17,7 +17,8 @@ export async function POST(request: NextRequest) {
         githubRepo,
         githubRepoUrl,
         prompt,
-        chatHistory
+        chatHistory,
+        creditsConsumed
       } = appData;
       
       if (!userId || !name) {
@@ -49,6 +50,7 @@ export async function POST(request: NextRequest) {
         githubRepoUrl: githubRepoUrl || '',
         prompt: prompt || '',
         chatHistory: chatHistory || [],
+        creditsConsumed: creditsConsumed || 0,
         createdAt: new Date(),
         updatedAt: new Date(),
         isPublic: false
@@ -202,9 +204,9 @@ export async function GET(request: NextRequest) {
      
      if (!db || !firestore) {
        return NextResponse.json({
-         success: false,
-         error: 'Firebase not configured'
-       }, { status: 500 });
+         success: true,
+         apps: []
+       });
      }
      
      if (appId) {

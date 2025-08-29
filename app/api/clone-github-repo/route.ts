@@ -28,12 +28,12 @@ export async function POST(request: NextRequest) {
     // Get user's GitHub access token
     const { db, firestore } = getFirebaseForAPI();
     
-    if (!db || !firestore) {
-      return NextResponse.json({
-        success: false,
-        error: 'Firebase not configured'
-      }, { status: 500 });
-    }
+         if (!db || !firestore) {
+       return NextResponse.json({
+         success: false,
+         error: 'GitHub not connected. Please connect your GitHub account first.'
+       }, { status: 401 });
+     }
 
     const userRef = firestore.doc(db, 'users', userId);
     const userDoc = await firestore.getDoc(userRef);

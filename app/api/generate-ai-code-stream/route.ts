@@ -72,6 +72,70 @@ declare global {
   var conversationState: ConversationState | null;
 }
 
+// Add this function at the top of the file, after the imports
+function sanitizeJsonString(str: string): string {
+  // Remove any null bytes or other problematic characters
+  str = str.replace(/\0/g, '');
+  
+  // Handle unterminated strings by finding the last complete JSON object
+  let braceCount = 0;
+  let inString = false;
+  let escapeNext = false;
+  let lastValidIndex = -1;
+  
+  for (let i = 0; i < str.length; i++) {
+    const char = str[i];
+    
+    if (escapeNext) {
+      escapeNext = false;
+      continue;
+    }
+    
+    if (char === '\\') {
+      escapeNext = true;
+      continue;
+    }
+    
+    if (char === '"' && !escapeNext) {
+      inString = !inString;
+    }
+    
+    if (!inString) {
+      if (char === '{') {
+        braceCount++;
+      } else if (char === '}') {
+        braceCount--;
+        if (braceCount === 0) {
+          lastValidIndex = i;
+        }
+      }
+    }
+  }
+  
+  // If we found a complete JSON object, return it
+  if (lastValidIndex > 0) {
+    return str.substring(0, lastValidIndex + 1);
+  }
+  
+  return str;
+}
+
+// Add this function to safely send JSON data
+function sendJsonData(writer: WritableStreamDefaultWriter, data: any) {
+  try {
+    const jsonString = JSON.stringify(data);
+    const sanitized = sanitizeJsonString(jsonString);
+    const chunk = `data: ${sanitized}\n\n`;
+    writer.write(new TextEncoder().encode(chunk));
+  } catch (error) {
+    console.error('[generate-ai-code-stream] Error sending JSON data:', error);
+    // Send error message instead
+    const errorData = { type: 'error', error: 'Failed to send data' };
+          const chunk = `data: ${sanitizeJsonString(JSON.stringify(errorData))}\n\n`;
+    writer.write(new TextEncoder().encode(chunk));
+  }
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { prompt, model = 'openai/gpt-oss-20b', context, isEdit = false } = await request.json();
@@ -144,8 +208,18 @@ export async function POST(request: NextRequest) {
     
     // Function to send progress updates
     const sendProgress = async (data: any) => {
-      const message = `data: ${JSON.stringify(data)}\n\n`;
-      await writer.write(encoder.encode(message));
+      try {
+        const jsonString = JSON.stringify(data);
+        const sanitized = sanitizeJsonString(jsonString);
+        const message = `data: ${sanitized}\n\n`;
+        await writer.write(encoder.encode(message));
+      } catch (error) {
+        console.error('[generate-ai-code-stream] Error sending progress data:', error);
+        // Send error message instead
+        const errorData = { type: 'error', error: 'Failed to send progress data' };
+        const message = `data: ${sanitizeJsonString(JSON.stringify(errorData))}\n\n`;
+        await writer.write(encoder.encode(message));
+      }
     };
     
     // Start processing in background
@@ -1247,6 +1321,11 @@ It's better to have 3 complete files than 10 incomplete files.`
         
         const result = await streamText(streamOptions);
         
+        // Capture actual token usage from the result
+        const actualUsage = await result.usage;
+        console.log('[generate-ai-code-stream] Actual token usage:', actualUsage);
+
+        
         // Stream the response and parse in real-time
         let generatedCode = '';
         let currentFile = '';
@@ -1608,6 +1687,10 @@ Provide the complete file content without any truncation. Include all necessary 
                   temperature: appConfig.ai.defaultTemperature
                 });
                 
+                // Capture token usage from completion
+                const completionUsage = completionResult.usage;
+                console.log('[generate-ai-code-stream] Completion token usage:', completionUsage);
+                
                 // Get the full text from the stream
                 let completedContent = '';
                 for await (const chunk of completionResult.textStream) {
@@ -1654,7 +1737,7 @@ Provide the complete file content without any truncation. Include all necessary 
           }
         }
         
-        // Send completion with packages info
+        // Send completion with packages info and actual token usage
         await sendProgress({ 
           type: 'complete', 
           generatedCode,
@@ -1663,7 +1746,8 @@ Provide the complete file content without any truncation. Include all necessary 
           components: componentCount,
           model,
           packagesToInstall: packagesToInstall.length > 0 ? packagesToInstall : undefined,
-          warnings: truncationWarnings.length > 0 ? truncationWarnings : undefined
+          warnings: truncationWarnings.length > 0 ? truncationWarnings : undefined,
+          tokenUsage: actualUsage // Include actual token usage
         });
         
         // Track edit in conversation history

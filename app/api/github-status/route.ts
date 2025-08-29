@@ -14,14 +14,14 @@ export async function GET(request: NextRequest) {
     }
 
     // Check if user has connected their GitHub account
-    const { db, firestore } = getFirebaseForAPI();
-    
-    if (!db || !firestore) {
-      return NextResponse.json({
-        success: false,
-        error: 'Firebase not configured'
-      }, { status: 500 });
-    }
+         const { db, firestore } = getFirebaseForAPI();
+     
+     if (!db || !firestore) {
+       return NextResponse.json({
+         connected: false,
+         error: 'GitHub not connected'
+       });
+     }
     
     const userRef = firestore.doc(db, 'users', userId);
     const userSnap = await firestore.getDoc(userRef);

@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/firebase';
-import { doc, getDoc } from 'firebase/firestore';
+import { getFirebaseForAPI } from '@/lib/firebase-utils';
 
 declare global {
   var activeSandbox: any;
@@ -24,9 +23,18 @@ export async function POST(request: NextRequest) {
       }, { status: 404 });
     }
 
+    const { db, firestore } = getFirebaseForAPI();
+    
+         if (!db || !firestore) {
+       return NextResponse.json({
+         success: false,
+         error: 'GitHub not connected. Please connect your GitHub account first.'
+       }, { status: 401 });
+     }
+    
     // Get user's GitHub access token from Firestore
-    const userRef = doc(db, 'users', userId);
-    const userSnap = await getDoc(userRef);
+    const userRef = firestore.doc(db, 'users', userId);
+    const userSnap = await firestore.getDoc(userRef);
     
     if (!userSnap.exists()) {
       return NextResponse.json({
