@@ -1322,8 +1322,14 @@ It's better to have 3 complete files than 10 incomplete files.`
         const result = await streamText(streamOptions);
         
         // Capture actual token usage from the result
-        const actualUsage = await result.usage;
+        let actualUsage = await result.usage;
         console.log('[generate-ai-code-stream] Actual token usage:', actualUsage);
+        
+        // Validate token usage data
+        if (!actualUsage || typeof actualUsage !== 'object') {
+          console.warn('[generate-ai-code-stream] No token usage data available from AI model');
+          actualUsage = { promptTokens: 0, completionTokens: 0 } as any;
+        }
 
         
         // Stream the response and parse in real-time

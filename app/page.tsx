@@ -3836,15 +3836,21 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                     try {
                       console.log('[generate-code] Token usage data structure:', {
                         tokenUsage: data.tokenUsage,
-                        promptTokens: data.tokenUsage.promptTokens,
-                        completionTokens: data.tokenUsage.completionTokens,
-                        promptTokensType: typeof data.tokenUsage.promptTokens,
-                        completionTokensType: typeof data.tokenUsage.completionTokens
+                        hasTokenUsage: !!data.tokenUsage,
+                        tokenUsageKeys: data.tokenUsage ? Object.keys(data.tokenUsage) : [],
+                        promptTokens: data.tokenUsage?.promptTokens,
+                        completionTokens: data.tokenUsage?.completionTokens,
+                        promptTokensType: typeof data.tokenUsage?.promptTokens,
+                        completionTokensType: typeof data.tokenUsage?.completionTokens
                       });
                       
-                      // Validate token usage data
-                      if (typeof data.tokenUsage.promptTokens !== 'number' || typeof data.tokenUsage.completionTokens !== 'number') {
-                        console.error('[generate-code] Invalid token usage data:', data.tokenUsage);
+                      // Validate token usage data - check if it exists and has valid structure
+                      if (!data.tokenUsage || 
+                          typeof data.tokenUsage !== 'object' || 
+                          Object.keys(data.tokenUsage).length === 0 ||
+                          typeof data.tokenUsage.promptTokens !== 'number' || 
+                          typeof data.tokenUsage.completionTokens !== 'number') {
+                        console.error('[generate-code] Invalid or missing token usage data:', data.tokenUsage);
                         throw new Error('Invalid token usage data structure');
                       }
                       
@@ -4460,15 +4466,21 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       try {
                         console.log('[initial-generation] Token usage data structure:', {
                           tokenUsage: data.tokenUsage,
-                          promptTokens: data.tokenUsage.promptTokens,
-                          completionTokens: data.tokenUsage.completionTokens,
-                          promptTokensType: typeof data.tokenUsage.promptTokens,
-                          completionTokensType: typeof data.tokenUsage.completionTokens
+                          hasTokenUsage: !!data.tokenUsage,
+                          tokenUsageKeys: data.tokenUsage ? Object.keys(data.tokenUsage) : [],
+                          promptTokens: data.tokenUsage?.promptTokens,
+                          completionTokens: data.tokenUsage?.completionTokens,
+                          promptTokensType: typeof data.tokenUsage?.promptTokens,
+                          completionTokensType: typeof data.tokenUsage?.completionTokens
                         });
                         
-                        // Validate token usage data
-                        if (typeof data.tokenUsage.promptTokens !== 'number' || typeof data.tokenUsage.completionTokens !== 'number') {
-                          console.error('[initial-generation] Invalid token usage data:', data.tokenUsage);
+                        // Validate token usage data - check if it exists and has valid structure
+                        if (!data.tokenUsage || 
+                            typeof data.tokenUsage !== 'object' || 
+                            Object.keys(data.tokenUsage).length === 0 ||
+                            typeof data.tokenUsage.promptTokens !== 'number' || 
+                            typeof data.tokenUsage.completionTokens !== 'number') {
+                          console.error('[initial-generation] Invalid or missing token usage data:', data.tokenUsage);
                           throw new Error('Invalid token usage data structure');
                         }
                         

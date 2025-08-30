@@ -42,13 +42,6 @@ export async function POST() {
         global.activeSandbox = null;
       }
     
-    // Clear existing files tracking
-    if (global.existingFiles) {
-      global.existingFiles.clear();
-    } else {
-      global.existingFiles = new Set<string>();
-    }
-
       // Clear existing files tracking
       if (global.existingFiles) {
         global.existingFiles.clear();
@@ -89,7 +82,7 @@ export async function POST() {
         timeoutPromise
       ]);
     
-          const sandboxId = (sandbox as any).sandboxId || Date.now().toString();
+      const sandboxId = (sandbox as any).sandboxId || Date.now().toString();
       const host = (sandbox as any).getHost(appConfig.e2b.vitePort);
       
       console.log(`[create-ai-sandbox] Sandbox created: ${sandboxId}`);
@@ -99,22 +92,22 @@ export async function POST() {
       console.log('[create-ai-sandbox] Setting up Vite React app...');
       
       // Write all files in a single Python script to avoid multiple executions
-    const setupScript = `
+      const setupScript = `
 import os
 import json
 
-print('Setting up React app with Vite and Tailwind...')
+# Create app directory
+os.makedirs('/home/user/app', exist_ok=True)
+os.chdir('/home/user/app')
 
-# Create directory structure
-os.makedirs('/home/user/app/src', exist_ok=True)
-
-# Package.json
+# Create package.json
 package_json = {
-    "name": "sandbox-app",
-    "version": "1.0.0",
+    "name": "codebharat-app",
+    "private": true,
+    "version": "0.0.0",
     "type": "module",
     "scripts": {
-        "dev": "vite --host",
+        "dev": "vite",
         "build": "vite build",
         "preview": "vite preview"
     },
@@ -123,40 +116,114 @@ package_json = {
         "react-dom": "^18.2.0"
     },
     "devDependencies": {
-        "@vitejs/plugin-react": "^4.0.0",
-        "vite": "^4.3.9",
-        "tailwindcss": "^3.3.0",
-        "postcss": "^8.4.31",
-        "autoprefixer": "^10.4.16"
+        "@types/react": "^18.2.43",
+        "@types/react-dom": "^18.2.17",
+        "@vitejs/plugin-react": "^4.2.1",
+        "autoprefixer": "^10.4.16",
+        "postcss": "^8.4.32",
+        "tailwindcss": "^3.3.6",
+        "vite": "^5.0.8"
     }
 }
 
-with open('/home/user/app/package.json', 'w') as f:
+with open('package.json', 'w') as f:
     json.dump(package_json, f, indent=2)
-print('✓ package.json')
 
-# Vite config for E2B - with allowedHosts
-vite_config = """import { defineConfig } from 'vite'
+# Create index.html
+index_html = '''<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>CodeBharat.dev App</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>'''
+
+with open('index.html', 'w') as f:
+    f.write(index_html)
+
+# Create src directory
+os.makedirs('src', exist_ok=True)
+
+# Create main.jsx
+main_jsx = '''import React from 'react'
+import ReactDOM from 'react-dom/client'
+import App from './App.jsx'
+import './index.css'
+
+ReactDOM.createRoot(document.getElementById('root')).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>,
+)'''
+
+with open('src/main.jsx', 'w') as f:
+    f.write(main_jsx)
+
+# Create App.jsx
+app_jsx = '''import { useState } from 'react'
+
+function App() {
+  const [count, setCount] = useState(0)
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+      <div className="text-center">
+        <h1 className="text-4xl font-bold text-gray-800 mb-8">
+          🚀 Welcome to CodeBharat.dev!
+        </h1>
+        <div className="bg-white rounded-lg shadow-lg p-8 max-w-md mx-auto">
+          <p className="text-gray-600 mb-6">
+            Your AI-powered development environment is ready!
+          </p>
+          <button
+            className="bg-blue-500 hover:bg-blue-600 text-white font-bold py-2 px-4 rounded transition-colors"
+            onClick={() => setCount((count) => count + 1)}
+          >
+            Count is {count}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+export default App'''
+
+with open('src/App.jsx', 'w') as f:
+    f.write(app_jsx)
+
+# Create index.css with Tailwind
+index_css = '''@tailwind base;
+@tailwind components;
+@tailwind utilities;'''
+
+with open('src/index.css', 'w') as f:
+    f.write(index_css)
+
+# Create vite.config.js
+vite_config = '''import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
-// E2B-compatible Vite configuration
+// https://vitejs.dev/config/
 export default defineConfig({
   plugins: [react()],
   server: {
     host: '0.0.0.0',
-    port: 5173,
-    strictPort: true,
-    hmr: false,
-    allowedHosts: ['.e2b.app', 'localhost', '127.0.0.1']
+    port: 5173
   }
-})"""
+})'''
 
-with open('/home/user/app/vite.config.js', 'w') as f:
+with open('vite.config.js', 'w') as f:
     f.write(vite_config)
-print('✓ vite.config.js')
 
-# Tailwind config - standard without custom design tokens
-tailwind_config = """/** @type {import('tailwindcss').Config} */
+# Create tailwind.config.js
+tailwind_config = '''/** @type {import('tailwindcss').Config} */
 export default {
   content: [
     "./index.html",
@@ -166,147 +233,34 @@ export default {
     extend: {},
   },
   plugins: [],
-}"""
+}'''
 
-with open('/home/user/app/tailwind.config.js', 'w') as f:
+with open('tailwind.config.js', 'w') as f:
     f.write(tailwind_config)
-print('✓ tailwind.config.js')
 
-# PostCSS config
-postcss_config = """export default {
+# Create postcss.config.js
+postcss_config = '''export default {
   plugins: {
     tailwindcss: {},
     autoprefixer: {},
   },
-}"""
+}'''
 
-with open('/home/user/app/postcss.config.js', 'w') as f:
+with open('postcss.config.js', 'w') as f:
     f.write(postcss_config)
-print('✓ postcss.config.js')
 
-# Index.html
-index_html = """<!DOCTYPE html>
-<html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Sandbox App</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>"""
-
-with open('/home/user/app/index.html', 'w') as f:
-    f.write(index_html)
-print('✓ index.html')
-
-# Main.jsx
-main_jsx = """import React from 'react'
-import ReactDOM from 'react-dom/client'
-import App from './App.jsx'
-import './index.css'
-
-ReactDOM.createRoot(document.getElementById('root')).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)"""
-
-with open('/home/user/app/src/main.jsx', 'w') as f:
-    f.write(main_jsx)
-print('✓ src/main.jsx')
-
-# App.jsx with explicit Tailwind test
-app_jsx = """function App() {
-  return (
-    <div className="min-h-screen bg-gray-900 text-white flex items-center justify-center p-4">
-      <div className="text-center max-w-2xl">
-        <p className="text-lg text-gray-400">
-          Sandbox Ready<br/>
-          Start building your React app with Vite and Tailwind CSS!
-        </p>
-      </div>
-    </div>
-  )
-}
-
-export default App"""
-
-with open('/home/user/app/src/App.jsx', 'w') as f:
-    f.write(app_jsx)
-print('✓ src/App.jsx')
-
-# Index.css with explicit Tailwind directives
-index_css = """@tailwind base;
-@tailwind components;
-@tailwind utilities;
-
-/* Force Tailwind to load */
-@layer base {
-  :root {
-    font-synthesis: none;
-    text-rendering: optimizeLegibility;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-    -webkit-text-size-adjust: 100%;
-  }
-  
-  * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-}
-
-body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
-  background-color: rgb(17 24 39);
-}"""
-
-with open('/home/user/app/src/index.css', 'w') as f:
-    f.write(index_css)
-print('✓ src/index.css')
-
-print('\\nAll files created successfully!')
+print("✓ All files created successfully")
 `;
 
-    // Execute the setup script
-    await sandbox.runCode(setupScript);
-    
-    // Install dependencies with timeout and better error handling
-    console.log('[create-ai-sandbox] Installing dependencies...');
-    await sandbox.runCode(`
-import subprocess
-import sys
-import time
-
-print('Installing npm packages...')
-try:
-    # Use npm install with timeout and legacy peer deps for faster installation
-    result = subprocess.run(
-        ['npm', 'install', '--legacy-peer-deps', '--no-audit', '--no-fund'],
-        cwd='/home/user/app',
-        capture_output=True,
-        text=True,
-        timeout=120  # 2 minute timeout
-    )
-    
-    if result.returncode == 0:
-        print('✓ Dependencies installed successfully')
-    else:
-        print(f'⚠ Warning: npm install had issues: {result.stderr}')
-        # Continue anyway as it might still work
-except subprocess.TimeoutExpired:
-    print('⚠ npm install timed out, continuing anyway...')
-except Exception as e:
-    print(f'⚠ npm install error: {e}, continuing anyway...')
-    `);
-    
-    // Start Vite dev server with timeout
-    console.log('[create-ai-sandbox] Starting Vite dev server...');
-    await sandbox.runCode(`
+      await sandbox.runCode(setupScript);
+      
+      // Install dependencies
+      console.log('[create-ai-sandbox] Installing dependencies...');
+      await sandbox.runCode('cd /home/user/app && npm install');
+      
+      // Start Vite development server with proper background process
+      console.log('[create-ai-sandbox] Starting Vite development server...');
+      await sandbox.runCode(`
 import subprocess
 import os
 import time
@@ -318,7 +272,7 @@ os.chdir('/home/user/app')
 subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
 time.sleep(1)
 
-# Start Vite dev server
+# Start Vite dev server in background
 env = os.environ.copy()
 env['FORCE_COLOR'] = '0'
 
@@ -331,21 +285,16 @@ process = subprocess.Popen(
 
 print(f'✓ Vite dev server started with PID: {process.pid}')
 
-# Wait for server to be ready with timeout
-def wait_for_server():
-    time.sleep(5)  # Reduced wait time
-    print('✓ Vite server should be ready')
-
-thread = threading.Thread(target=wait_for_server)
-thread.daemon = True
-thread.start()
-    `);
-    
-    // Reduced wait time for Vite to be ready
-    await new Promise(resolve => setTimeout(resolve, 5000)); // Reduced from 7s to 5s
-    
-    // Force Tailwind CSS to rebuild by touching the CSS file
-    await sandbox.runCode(`
+# Wait for server to be ready
+time.sleep(8)  # Give more time for Vite to start
+print('✓ Vite server should be ready')
+      `);
+      
+      // Wait for Vite to be ready
+      await new Promise(resolve => setTimeout(resolve, 8000)); // Increased wait time
+      
+      // Force Tailwind CSS to rebuild by touching the CSS file
+      await sandbox.runCode(`
 import os
 import time
 
@@ -358,7 +307,7 @@ if os.path.exists(css_file):
 # Also ensure PostCSS processes it
 time.sleep(2)
 print('✓ Tailwind CSS should be loaded')
-    `);
+      `);
 
       // Store sandbox globally
       global.activeSandbox = sandbox;
@@ -454,26 +403,5 @@ print('✓ Tailwind CSS should be loaded')
         }, { status: 500 });
       }
     }
-  }
-
-  } catch (error) {
-    console.error('[create-ai-sandbox] Error:', error);
-    
-    // Clean up on error
-    if (sandbox) {
-      try {
-        await sandbox.kill();
-      } catch (e) {
-        console.error('Failed to close sandbox on error:', e);
-      }
-    }
-    
-    return NextResponse.json(
-      { 
-        error: error instanceof Error ? error.message : 'Failed to create sandbox',
-        details: error instanceof Error ? error.stack : undefined
-      },
-      { status: 500 }
-    );
   }
 }
