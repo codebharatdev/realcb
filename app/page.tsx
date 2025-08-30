@@ -1197,12 +1197,9 @@ export default function AISandboxPage() {
                       url: repoUrl
                     };
                     
-                                            // Wait a bit more for files to be fully written, then commit
-                        setTimeout(async () => {
-                          console.log('[createSandbox] Committing code to GitHub repository:', repoName);
-                          const commitMessage = `CodeBharat.dev: Initial commit - ${promptInput}`;
-                          const commitResult = await commitSandboxToGitHub(commitMessage);
-                          console.log('[createSandbox] Git commit result:', commitResult);
+                                            // Don't commit here - wait for code generation to complete
+                        // The commit will happen after AI generation is finished
+                        console.log('[createSandbox] GitHub repository ready for commits after code generation');
                           
                           // After successful commit, save app to database
                           if (commitResult && commitResult.success) {
@@ -3570,23 +3567,17 @@ Tip: I automatically detect and install npm packages from your code imports (lik
       userId: user?.uid
     });
     
+    // Only create GitHub repository if this is the initial generation (not for chat messages)
+    // GitHub repo should be created during sandbox creation, not here
     if (githubConnected && conversationContext.appliedCode.length === 0) {
-      console.log('[sendChatMessage] ✅ Creating GitHub repository immediately for:', message);
-      githubRepoPromise = createGitHubRepoForGeneration(message);
-      
-      // Wait for repository creation before proceeding with generation
-      try {
-        const repoUrl = await githubRepoPromise;
-        if (repoUrl) {
-          console.log('[sendChatMessage] GitHub repository created successfully:', repoUrl);
-          addChatMessage(`🚀 Created GitHub repository: ${repoUrl}`, 'system');
-        } else {
-          console.log('[sendChatMessage] GitHub repository creation failed');
-          addChatMessage('⚠️ Failed to create GitHub repository, but continuing with generation', 'system');
-        }
-      } catch (error) {
-        console.error('[sendChatMessage] GitHub repository creation error:', error);
-        addChatMessage('⚠️ GitHub repository creation failed, but continuing with generation', 'system');
+      console.log('[sendChatMessage] ✅ Using existing GitHub repository for generation');
+      // Don't create a new repo here - it should already be created during sandbox creation
+      // Just use the existing repo info
+      const repoInfo = currentGitHubRepo || (window as any).currentGitHubRepoInfo;
+      if (repoInfo) {
+        console.log('[sendChatMessage] Using existing GitHub repository:', repoInfo.url);
+      } else {
+        console.log('[sendChatMessage] No existing GitHub repository found - will be created during sandbox creation');
       }
     } else {
       console.log('[sendChatMessage] ❌ GitHub repo creation skipped:', {
@@ -3910,39 +3901,51 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       
 
                       
-                      // Consume the actual tokens used
-                      const consumeResponse = await fetch('/api/tokens/consume-actual', {
-                        method: 'POST',
-                        headers: {
-                          'Content-Type': 'application/json',
-                        },
-                        body: JSON.stringify({
-                          userId: user.uid,
-                          actualTokens,
-                          description: `AI Code Generation: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`
-                        }),
-                      });
-
-                      const consumeData = await consumeResponse.json();
-
-                      if (consumeData.success) {
-                        // Update token balance
-                        setTokenBalance(consumeData.remainingBalance);
-                        setCurrentGenerationCredits(actualTokens); // Track credits for this generation
+                      // First, commit the generated code to GitHub
+                      console.log('[generate-code] Committing generated code to GitHub before deducting credits...');
+                      const commitMessage = `CodeBharat.dev: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`;
+                      const commitResult = await commitSandboxToGitHub(commitMessage);
+                      
+                      if (commitResult && commitResult.success) {
+                        console.log('[generate-code] Code committed successfully, now deducting credits...');
                         
-                        // Show detailed transparency report
-                        showCreditTransparency(actualTokens, 'AI Code Generation');
-                        
-                        // Track consumption history for transparency
-                        await trackCreditConsumption('AI Code Generation', actualTokens, {
-                          promptLength: message.length,
-                          model: aiModel,
-                          hasGitHubRepo: !!currentGitHubRepo,
-                          filesGenerated: 0 // Will be updated after file parsing
+                        // Only deduct credits after successful commit
+                        const consumeResponse = await fetch('/api/tokens/consume-actual', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({
+                            userId: user.uid,
+                            actualTokens,
+                            description: `AI Code Generation: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`
+                          }),
                         });
+
+                        const consumeData = await consumeResponse.json();
+
+                        if (consumeData.success) {
+                          // Update token balance
+                          setTokenBalance(consumeData.remainingBalance);
+                          setCurrentGenerationCredits(actualTokens); // Track credits for this generation
+                          
+                          // Show detailed transparency report
+                          showCreditTransparency(actualTokens, 'AI Code Generation');
+                          
+                          // Track consumption history for transparency
+                          await trackCreditConsumption('AI Code Generation', actualTokens, {
+                            promptLength: message.length,
+                            model: aiModel,
+                            hasGitHubRepo: !!currentGitHubRepo,
+                            filesGenerated: 0 // Will be updated after file parsing
+                          });
+                        } else {
+                          console.error('Failed to consume actual tokens:', consumeData.error);
+                          addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                        }
                       } else {
-                        console.error('Failed to consume actual tokens:', consumeData.error);
-                        addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                        console.error('[generate-code] Failed to commit code to GitHub, not deducting credits');
+                        addChatMessage(`❌ Failed to commit code to GitHub. Credits not deducted.`, 'system');
                       }
                     } catch (error) {
                       console.error('Error consuming actual tokens:', error);
@@ -4561,30 +4564,42 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                           totalTokens: actualTokens
                         });
                         
-                        // Consume the actual tokens used
-                        const consumeResponse = await fetch('/api/tokens/consume-actual', {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                          },
-                          body: JSON.stringify({
-                            userId: user.uid,
-                            actualTokens,
-                            description: `AI Code Generation: "${promptInput.substring(0, 100)}${promptInput.length > 100 ? '...' : ''}"`
-                          }),
-                        });
+                        // First, commit the generated code to GitHub
+                        console.log('[initial-generation] Committing generated code to GitHub before deducting credits...');
+                        const commitMessage = `CodeBharat.dev: ${promptInput.substring(0, 50)}${promptInput.length > 50 ? '...' : ''}`;
+                        const commitResult = await commitSandboxToGitHub(commitMessage);
+                        
+                        if (commitResult && commitResult.success) {
+                          console.log('[initial-generation] Code committed successfully, now deducting credits...');
+                          
+                          // Only deduct credits after successful commit
+                          const consumeResponse = await fetch('/api/tokens/consume-actual', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                              userId: user.uid,
+                              actualTokens,
+                              description: `AI Code Generation: "${promptInput.substring(0, 100)}${promptInput.length > 100 ? '...' : ''}"`
+                            }),
+                          });
 
-                        const consumeData = await consumeResponse.json();
+                          const consumeData = await consumeResponse.json();
 
-                        if (consumeData.success) {
-                          // Update token balance
-                          setTokenBalance(consumeData.remainingBalance);
-                          addChatMessage(`💳 AI Credits consumed: ${actualTokens.toLocaleString()} (actual usage). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
-                        } else {
-                          console.error('Failed to consume actual tokens:', consumeData.error);
-                          addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
-                        }
-                      } catch (error) {
+                          if (consumeData.success) {
+                            // Update token balance
+                            setTokenBalance(consumeData.remainingBalance);
+                            addChatMessage(`💳 AI Credits consumed: ${actualTokens.toLocaleString()} (actual usage). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                          } else {
+                            console.error('Failed to consume actual tokens:', consumeData.error);
+                            addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                          }
+                                                 } else {
+                           console.error('[initial-generation] Failed to commit code to GitHub, not deducting credits');
+                           addChatMessage(`❌ Failed to commit code to GitHub. Credits not deducted.`, 'system');
+                         }
+                       } catch (error) {
                         console.error('Error consuming actual tokens:', error);
                         addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
                       }

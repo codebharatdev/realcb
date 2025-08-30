@@ -225,9 +225,25 @@ npm run dev
             f.write(readme_content)
         print("✅ Created README.md file")
         
-        # Add only source files (not node_modules)
+        # List all files in the directory to debug
+        print("📁 Files in current directory:")
+        for root, dirs, files in os.walk('.'):
+            level = root.replace('.', '').count(os.sep)
+            indent = ' ' * 2 * level
+            print(f"{indent}{os.path.basename(root)}/")
+            subindent = ' ' * 2 * (level + 1)
+            for file in files:
+                if not file.startswith('.') and 'node_modules' not in root:
+                    print(f"{subindent}{file}")
+        
+        # Add all files except node_modules
         subprocess.run(['git', 'add', '.'], check=True, capture_output=True, text=True)
-        print("✅ Added source files to git (node_modules excluded)")
+        print("✅ Added all source files to git (node_modules excluded)")
+        
+        # Check what's staged
+        staged_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
+        print("📋 Staged files:")
+        print(staged_result.stdout)
         
         # Commit with message
         subprocess.run(['git', 'commit', '-m', '${commitMessage}'], check=True, capture_output=True, text=True)
