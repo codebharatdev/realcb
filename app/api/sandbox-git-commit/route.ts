@@ -69,6 +69,7 @@ export async function POST(request: NextRequest) {
 import os
 import subprocess
 import json
+import time
 
 print("🚀 Starting git setup and commit process...")
 
@@ -76,18 +77,41 @@ def setup_git_and_commit():
     try:
         # Change to app directory
         os.chdir('/home/user/app')
+        print(f"📁 Changed to directory: {os.getcwd()}")
+        
+        # List all files before git operations
+        print("📋 Files in current directory before git operations:")
+        for root, dirs, files in os.walk('.'):
+            level = root.replace('.', '').count(os.sep)
+            indent = ' ' * 2 * level
+            print(f"{indent}{os.path.basename(root)}/")
+            subindent = ' ' * 2 * (level + 1)
+            for file in files:
+                if not file.startswith('.') and 'node_modules' not in root:
+                    print(f"{subindent}{file}")
         
         # Initialize git repository if not already done
         if not os.path.exists('.git'):
             subprocess.run(['git', 'init'], check=True, capture_output=True, text=True)
             print("✅ Git repository initialized")
+        else:
+            print("✅ Git repository already exists")
         
         # Configure git user
         subprocess.run(['git', 'config', 'user.name', 'CodeBharat.dev Bot'], check=True, capture_output=True, text=True)
         subprocess.run(['git', 'config', 'user.email', 'bot@codebharat.dev'], check=True, capture_output=True, text=True)
+        print("✅ Git user configured")
         
         # Add remote origin (repository is always new with timestamp-based names)
         remote_url = f"https://github.com/${userData.githubUsername}/${repoName}.git"
+        
+        # Remove existing remote if it exists
+        try:
+            subprocess.run(['git', 'remote', 'remove', 'origin'], capture_output=True, text=True)
+            print("✅ Removed existing remote origin")
+        except:
+            pass
+        
         subprocess.run(['git', 'remote', 'add', 'origin', remote_url], check=True, capture_output=True, text=True)
         print(f"✅ Added remote origin: {remote_url}")
         
@@ -225,8 +249,11 @@ npm run dev
             f.write(readme_content)
         print("✅ Created README.md file")
         
-        # List all files in the directory to debug
-        print("📁 Files in current directory:")
+        # Wait a moment for any file system operations to complete
+        time.sleep(1)
+        
+        # List all files again after creating README and .gitignore
+        print("📋 Files in current directory after creating README and .gitignore:")
         for root, dirs, files in os.walk('.'):
             level = root.replace('.', '').count(os.sep)
             indent = ' ' * 2 * level
@@ -236,6 +263,11 @@ npm run dev
                 if not file.startswith('.') and 'node_modules' not in root:
                     print(f"{subindent}{file}")
         
+        # Check git status before adding
+        status_before = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
+        print("📋 Git status before adding files:")
+        print(status_before.stdout)
+        
         # Add all files except node_modules
         subprocess.run(['git', 'add', '.'], check=True, capture_output=True, text=True)
         print("✅ Added all source files to git (node_modules excluded)")
@@ -243,6 +275,36 @@ npm run dev
         # Check what's staged
         staged_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
         print("📋 Staged files:")
+        print(staged_result.stdout)
+        
+        # Check if there are any files to commit
+        if not staged_result.stdout.strip():
+            print("⚠️ No files to commit - checking if files exist...")
+            # List all files again
+            for root, dirs, files in os.walk('.'):
+                level = root.replace('.', '').count(os.sep)
+                indent = ' ' * 2 * level
+                print(f"{indent}{os.path.basename(root)}/")
+                subindent = ' ' * 2 * (level + 1)
+                for file in files:
+                    if not file.startswith('.') and 'node_modules' not in root:
+                        print(f"{subindent}{file}")
+            
+            # Try to add files individually
+            print("🔄 Trying to add files individually...")
+            for root, dirs, files in os.walk('.'):
+                for file in files:
+                    if not file.startswith('.') and 'node_modules' not in root:
+                        file_path = os.path.join(root, file)
+                        try:
+                            subprocess.run(['git', 'add', file_path], check=True, capture_output=True, text=True)
+                            print(f"✅ Added: {file_path}")
+                        except Exception as e:
+                            print(f"⚠️ Failed to add {file_path}: {e}")
+        
+        # Check staged files again
+        staged_result = subprocess.run(['git', 'status', '--porcelain'], capture_output=True, text=True)
+        print("📋 Staged files after individual add:")
         print(staged_result.stdout)
         
         # Commit with message

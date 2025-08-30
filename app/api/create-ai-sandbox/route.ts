@@ -15,11 +15,11 @@ export async function POST() {
   let sandbox: any = null;
   let attempts = 0;
   const maxAttempts = 3;
-  const baseTimeout = 4 * 60 * 1000; // 4 minutes base timeout
+  const baseTimeout = 3 * 60 * 1000; // 3 minutes base timeout - reduced for faster feedback
   
   // Enhanced timeout with exponential backoff
   const getTimeoutForAttempt = (attempt: number) => {
-    return Math.min(baseTimeout * Math.pow(1.5, attempt), 10 * 60 * 1000); // Max 10 minutes
+    return Math.min(baseTimeout * Math.pow(1.2, attempt), 6 * 60 * 1000); // Max 6 minutes
   };
 
   const createSandboxWithFallback = async (attempt: number): Promise<any> => {
@@ -56,16 +56,16 @@ export async function POST() {
       const sandboxConfigs = [
         { 
           apiKey: process.env.E2B_API_KEY,
-          timeoutMs: Math.min(appConfig.e2b.timeoutMs, 5 * 60 * 1000)
+          timeoutMs: Math.min(appConfig.e2b.timeoutMs, 3 * 60 * 1000)
         },
         { 
           apiKey: process.env.E2B_API_KEY,
-          timeoutMs: Math.min(appConfig.e2b.timeoutMs, 3 * 60 * 1000), // Shorter timeout
+          timeoutMs: Math.min(appConfig.e2b.timeoutMs, 2 * 60 * 1000), // Shorter timeout
           template: 'base' // Try with base template
         },
         { 
           apiKey: process.env.E2B_API_KEY,
-          timeoutMs: Math.min(appConfig.e2b.timeoutMs, 2 * 60 * 1000), // Even shorter timeout
+          timeoutMs: Math.min(appConfig.e2b.timeoutMs, 1.5 * 60 * 1000), // Even shorter timeout
           template: 'base',
           cpus: 1, // Reduce resources
           memory: 512
@@ -75,7 +75,10 @@ export async function POST() {
       const configIndex = Math.min(attempt - 1, sandboxConfigs.length - 1);
       const config = sandboxConfigs[configIndex];
       
-      console.log(`[create-ai-sandbox] Using config ${configIndex + 1}:`, config);
+      console.log(`[create-ai-sandbox] Using config ${configIndex + 1}:`, {
+        ...config,
+        apiKey: config.apiKey ? '***' : 'MISSING'
+      });
       
       sandbox = await Promise.race([
         Sandbox.create(config),
@@ -88,6 +91,16 @@ export async function POST() {
       console.log(`[create-ai-sandbox] Sandbox created: ${sandboxId}`);
       console.log(`[create-ai-sandbox] Sandbox host: ${host}`);
 
+      // Test sandbox connectivity first
+      console.log('[create-ai-sandbox] Testing sandbox connectivity...');
+      try {
+        const testResult = await sandbox.runCode('print("✅ Sandbox connectivity test passed")');
+        console.log('[create-ai-sandbox] Connectivity test result:', testResult.logs.stdout.join(''));
+      } catch (testError) {
+        console.error('[create-ai-sandbox] Connectivity test failed:', testError);
+        throw new Error('Sandbox connectivity test failed');
+      }
+
       // Set up a basic Vite React app using Python to write files
       console.log('[create-ai-sandbox] Setting up Vite React app...');
       
@@ -95,15 +108,21 @@ export async function POST() {
       const setupScript = `
 import os
 import json
+import subprocess
+import time
+
+print("🚀 Starting Vite React app setup...")
 
 # Create app directory
 os.makedirs('/home/user/app', exist_ok=True)
 os.chdir('/home/user/app')
 
+print("📁 Created app directory")
+
 # Create package.json
 package_json = {
     "name": "codebharat-app",
-    "private": true,
+    "private": True,
     "version": "0.0.0",
     "type": "module",
     "scripts": {
@@ -129,6 +148,8 @@ package_json = {
 with open('package.json', 'w') as f:
     json.dump(package_json, f, indent=2)
 
+print("📦 Created package.json")
+
 # Create index.html
 index_html = '''<!doctype html>
 <html lang="en">
@@ -147,6 +168,8 @@ index_html = '''<!doctype html>
 with open('index.html', 'w') as f:
     f.write(index_html)
 
+print("📄 Created index.html")
+
 # Create src directory
 os.makedirs('src', exist_ok=True)
 
@@ -164,6 +187,8 @@ ReactDOM.createRoot(document.getElementById('root')).render(
 
 with open('src/main.jsx', 'w') as f:
     f.write(main_jsx)
+
+print("⚛️ Created main.jsx")
 
 # Create App.jsx
 app_jsx = '''import { useState } from 'react'
@@ -198,6 +223,8 @@ export default App'''
 with open('src/App.jsx', 'w') as f:
     f.write(app_jsx)
 
+print("🎨 Created App.jsx")
+
 # Create index.css with Tailwind
 index_css = '''@tailwind base;
 @tailwind components;
@@ -205,6 +232,8 @@ index_css = '''@tailwind base;
 
 with open('src/index.css', 'w') as f:
     f.write(index_css)
+
+print("🎨 Created index.css")
 
 # Create vite.config.js
 vite_config = '''import { defineConfig } from 'vite'
@@ -222,6 +251,8 @@ export default defineConfig({
 with open('vite.config.js', 'w') as f:
     f.write(vite_config)
 
+print("⚙️ Created vite.config.js")
+
 # Create tailwind.config.js
 tailwind_config = '''/** @type {import('tailwindcss').Config} */
 export default {
@@ -238,6 +269,8 @@ export default {
 with open('tailwind.config.js', 'w') as f:
     f.write(tailwind_config)
 
+print("🎨 Created tailwind.config.js")
+
 # Create postcss.config.js
 postcss_config = '''export default {
   plugins: {
@@ -249,23 +282,31 @@ postcss_config = '''export default {
 with open('postcss.config.js', 'w') as f:
     f.write(postcss_config)
 
-print("✓ All files created successfully")
+print("🎨 Created postcss.config.js")
+
+print("✅ All files created successfully")
 `;
 
       await sandbox.runCode(setupScript);
       
       // Install dependencies
       console.log('[create-ai-sandbox] Installing dependencies...');
-      await sandbox.runCode('cd /home/user/app && npm install');
+      const installResult = await sandbox.runCode('cd /home/user/app && npm install');
+      console.log('[create-ai-sandbox] Install result:', installResult.logs.stdout.join(''));
+      
+      if (installResult.logs.stderr.length > 0) {
+        console.warn('[create-ai-sandbox] Install warnings:', installResult.logs.stderr.join(''));
+      }
       
       // Start Vite development server with more reliable approach
       console.log('[create-ai-sandbox] Starting Vite development server...');
-      await sandbox.runCode(`
+      const viteStartResult = await sandbox.runCode(`
 import subprocess
 import os
 import time
-import requests
 import threading
+
+print("🚀 Starting Vite development server...")
 
 os.chdir('/home/user/app')
 
@@ -273,6 +314,8 @@ os.chdir('/home/user/app')
 subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
 subprocess.run(['pkill', '-f', 'node'], capture_output=True)
 time.sleep(2)
+
+print("🧹 Killed existing processes")
 
 # Start Vite dev server in background with nohup
 env = os.environ.copy()
@@ -284,49 +327,76 @@ process = subprocess.Popen([
     'nohup', 'npm', 'run', 'dev', '>', '/tmp/vite.log', '2>&1', '&'
 ], shell=True, env=env)
 
-print(f'✓ Vite dev server started with PID: {process.pid}')
+print(f'✅ Vite dev server started with PID: {process.pid}')
 
 # Wait and check if server is actually running
-max_attempts = 10
+max_attempts = 15
 for attempt in range(max_attempts):
     time.sleep(2)
     try:
         # Check if port 5173 is listening
         result = subprocess.run(['netstat', '-tlnp'], capture_output=True, text=True)
         if '5173' in result.stdout:
-            print(f'✓ Port 5173 is listening (attempt {attempt + 1})')
+            print(f'✅ Port 5173 is listening (attempt {attempt + 1})')
             break
     except:
         pass
     
     # Also try to check if the process is still running
     if process.poll() is not None:
-        print('⚠ Vite process died, restarting...')
+        print('⚠️ Vite process died, restarting...')
         process = subprocess.Popen([
             'nohup', 'npm', 'run', 'dev', '>', '/tmp/vite.log', '2>&1', '&'
         ], shell=True, env=env)
 
-print('✓ Vite server should be ready')
+print('✅ Vite server should be ready')
+
+# Verify by checking the log file
+try:
+    with open('/tmp/vite.log', 'r') as f:
+        log_content = f.read()
+        if 'Local:' in log_content:
+            print('✅ Vite server confirmed running from logs')
+        else:
+            print('⚠️ Vite server status unclear from logs')
+except:
+    print('⚠️ Could not read Vite logs')
       `);
+      
+      console.log('[create-ai-sandbox] Vite startup result:', viteStartResult.logs.stdout.join(''));
       
       // Wait for Vite to be ready
-      await new Promise(resolve => setTimeout(resolve, 12000)); // Increased wait time further
+      console.log('[create-ai-sandbox] Waiting for Vite server to be ready...');
+      await new Promise(resolve => setTimeout(resolve, 8000)); // Reduced wait time
       
-      // Force Tailwind CSS to rebuild by touching the CSS file
-      await sandbox.runCode(`
-import os
+      // Verify Vite server is running
+      console.log('[create-ai-sandbox] Verifying Vite server...');
+      const verifyResult = await sandbox.runCode(`
+import subprocess
 import time
 
-# Touch the CSS file to trigger rebuild
-css_file = '/home/user/app/src/index.css'
-if os.path.exists(css_file):
-    os.utime(css_file, None)
-    print('✓ Triggered CSS rebuild')
-    
-# Also ensure PostCSS processes it
-time.sleep(2)
-print('✓ Tailwind CSS should be loaded')
+print("🔍 Verifying Vite server status...")
+
+# Check if port 5173 is listening
+try:
+    result = subprocess.run(['netstat', '-tlnp'], capture_output=True, text=True)
+    if '5173' in result.stdout:
+        print('✅ Port 5173 is listening')
+    else:
+        print('⚠️ Port 5173 is not listening')
+        
+    # Check process
+    ps_result = subprocess.run(['ps', 'aux'], capture_output=True, text=True)
+    if 'vite' in ps_result.stdout:
+        print('✅ Vite process is running')
+    else:
+        print('⚠️ Vite process not found')
+        
+except Exception as e:
+    print(f'⚠️ Error checking Vite status: {e}')
       `);
+      
+      console.log('[create-ai-sandbox] Vite verification result:', verifyResult.logs.stdout.join(''));
 
       // Store sandbox globally
       global.activeSandbox = sandbox;

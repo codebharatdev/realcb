@@ -3817,6 +3817,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       });
                       
                       // Validate token usage data - check if it exists and has valid structure
+                      // Wait a moment for all files to be fully written to the sandbox
+                      console.log('[generate-code] Waiting for files to be fully written...');
+                      await new Promise(resolve => setTimeout(resolve, 3000));
+                      
                       // Always commit to GitHub first, regardless of token usage data
                       console.log('[generate-code] Committing generated code to GitHub before handling credits...');
                       const commitMessage = `CodeBharat.dev: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`;
@@ -4479,6 +4483,10 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                           promptTokensType: typeof data.tokenUsage?.promptTokens,
                           completionTokensType: typeof data.tokenUsage?.completionTokens
                         });
+                        
+                        // Wait a moment for all files to be fully written to the sandbox
+                        console.log('[initial-generation] Waiting for files to be fully written...');
+                        await new Promise(resolve => setTimeout(resolve, 3000));
                         
                         // Always commit to GitHub first, regardless of token usage data
                         console.log('[initial-generation] Committing generated code to GitHub before handling credits...');
