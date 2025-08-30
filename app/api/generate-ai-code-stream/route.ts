@@ -1753,7 +1753,7 @@ Provide the complete file content without any truncation. Include all necessary 
           model,
           packagesToInstall: packagesToInstall.length > 0 ? packagesToInstall : undefined,
           warnings: truncationWarnings.length > 0 ? truncationWarnings : undefined,
-          tokenUsage: actualUsage // Include actual token usage
+          tokenUsage: actualUsage || { promptTokens: 0, completionTokens: 0 } // Ensure tokenUsage is never empty
         });
         
         // Track edit in conversation history

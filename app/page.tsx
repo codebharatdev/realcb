@@ -1095,6 +1095,29 @@ export default function AISandboxPage() {
             // Fetch sandbox files after creation
             setTimeout(fetchSandboxFiles, 1000);
             
+            // Check Vite server health after a delay
+            setTimeout(async () => {
+              try {
+                console.log('[createSandbox] Checking Vite server health...');
+                const healthResponse = await fetch('/api/check-vite-server', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({ sandboxId: data.sandboxId })
+                });
+                
+                const healthData = await healthResponse.json();
+                
+                if (healthData.success) {
+                  console.log('[createSandbox] Vite server is healthy');
+                } else {
+                  console.warn('[createSandbox] Vite server health check failed:', healthData.error);
+                  log('⚠️ Vite server may not be running properly');
+                }
+              } catch (error) {
+                console.error('[createSandbox] Vite server health check error:', error);
+              }
+            }, 15000); // Check after 15 seconds
+            
                          // If we have loaded files, apply them to the new sandbox
              if (currentSandboxFiles && Object.keys(currentSandboxFiles).length > 0) {
                setTimeout(async () => {
@@ -3850,8 +3873,31 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                           Object.keys(data.tokenUsage).length === 0 ||
                           typeof data.tokenUsage.promptTokens !== 'number' || 
                           typeof data.tokenUsage.completionTokens !== 'number') {
-                        console.error('[generate-code] Invalid or missing token usage data:', data.tokenUsage);
-                        throw new Error('Invalid token usage data structure');
+                        console.warn('[generate-code] Invalid or missing token usage data, using fallback:', data.tokenUsage);
+                        // Instead of throwing error, use fallback estimation
+                        const estimatedTokens = Math.ceil(message.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(message.length / 4) + 800 + 2500) * 0.2);
+                        
+                        const consumeResponse = await fetch('/api/tokens/consume', {
+                          method: 'POST',
+                          headers: {
+                            'Content-Type': 'application/json',
+                          },
+                          body: JSON.stringify({
+                            userId: user.uid,
+                            prompt: message,
+                          }),
+                        });
+
+                        const consumeData = await consumeResponse.json();
+
+                        if (consumeData.success) {
+                          setTokenBalance(consumeData.remainingBalance);
+                          addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()} (estimated - no usage data). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                        } else {
+                          console.error('Failed to consume estimated tokens:', consumeData.error);
+                          addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                        }
+                        return; // Exit early, don't proceed with actual token consumption
                       }
                       
                       const actualTokens = data.tokenUsage.promptTokens + data.tokenUsage.completionTokens;
@@ -4480,8 +4526,31 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                             Object.keys(data.tokenUsage).length === 0 ||
                             typeof data.tokenUsage.promptTokens !== 'number' || 
                             typeof data.tokenUsage.completionTokens !== 'number') {
-                          console.error('[initial-generation] Invalid or missing token usage data:', data.tokenUsage);
-                          throw new Error('Invalid token usage data structure');
+                          console.warn('[initial-generation] Invalid or missing token usage data, using fallback:', data.tokenUsage);
+                          // Instead of throwing error, use fallback estimation
+                          const estimatedTokens = Math.ceil(promptInput.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(promptInput.length / 4) + 800 + 2500) * 0.2);
+                          
+                          const consumeResponse = await fetch('/api/tokens/consume', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                              userId: user.uid,
+                              prompt: promptInput,
+                            }),
+                          });
+
+                          const consumeData = await consumeResponse.json();
+
+                          if (consumeData.success) {
+                            setTokenBalance(consumeData.remainingBalance);
+                            addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()} (estimated - no usage data). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                          } else {
+                            console.error('Failed to consume estimated tokens:', consumeData.error);
+                            addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                          }
+                          return; // Exit early, don't proceed with actual token consumption
                         }
                         
                         const actualTokens = data.tokenUsage.promptTokens + data.tokenUsage.completionTokens;

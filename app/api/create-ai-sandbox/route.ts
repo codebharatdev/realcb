@@ -258,40 +258,59 @@ print("✓ All files created successfully")
       console.log('[create-ai-sandbox] Installing dependencies...');
       await sandbox.runCode('cd /home/user/app && npm install');
       
-      // Start Vite development server with proper background process
+      // Start Vite development server with more reliable approach
       console.log('[create-ai-sandbox] Starting Vite development server...');
       await sandbox.runCode(`
 import subprocess
 import os
 import time
+import requests
 import threading
 
 os.chdir('/home/user/app')
 
 # Kill any existing Vite processes
 subprocess.run(['pkill', '-f', 'vite'], capture_output=True)
-time.sleep(1)
+subprocess.run(['pkill', '-f', 'node'], capture_output=True)
+time.sleep(2)
 
-# Start Vite dev server in background
+# Start Vite dev server in background with nohup
 env = os.environ.copy()
 env['FORCE_COLOR'] = '0'
+env['NODE_ENV'] = 'development'
 
-process = subprocess.Popen(
-    ['npm', 'run', 'dev'],
-    stdout=subprocess.PIPE,
-    stderr=subprocess.PIPE,
-    env=env
-)
+# Use nohup to ensure the process stays running
+process = subprocess.Popen([
+    'nohup', 'npm', 'run', 'dev', '>', '/tmp/vite.log', '2>&1', '&'
+], shell=True, env=env)
 
 print(f'✓ Vite dev server started with PID: {process.pid}')
 
-# Wait for server to be ready
-time.sleep(8)  # Give more time for Vite to start
+# Wait and check if server is actually running
+max_attempts = 10
+for attempt in range(max_attempts):
+    time.sleep(2)
+    try:
+        # Check if port 5173 is listening
+        result = subprocess.run(['netstat', '-tlnp'], capture_output=True, text=True)
+        if '5173' in result.stdout:
+            print(f'✓ Port 5173 is listening (attempt {attempt + 1})')
+            break
+    except:
+        pass
+    
+    # Also try to check if the process is still running
+    if process.poll() is not None:
+        print('⚠ Vite process died, restarting...')
+        process = subprocess.Popen([
+            'nohup', 'npm', 'run', 'dev', '>', '/tmp/vite.log', '2>&1', '&'
+        ], shell=True, env=env)
+
 print('✓ Vite server should be ready')
       `);
       
       // Wait for Vite to be ready
-      await new Promise(resolve => setTimeout(resolve, 8000)); // Increased wait time
+      await new Promise(resolve => setTimeout(resolve, 12000)); // Increased wait time further
       
       // Force Tailwind CSS to rebuild by touching the CSS file
       await sandbox.runCode(`
