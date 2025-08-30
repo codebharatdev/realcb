@@ -1191,55 +1191,13 @@ export default function AISandboxPage() {
                     const repoName = repoUrl.split('/').pop() || 'unknown-repo';
                     console.log('[createSandbox] Extracted repo name:', repoName);
                     
-                    // Store repo info
+                    // Store repo info for later use
                     (window as any).currentGitHubRepoInfo = {
                       name: repoName,
                       url: repoUrl
                     };
                     
-                                            // Don't commit here - wait for code generation to complete
-                        // The commit will happen after AI generation is finished
-                        console.log('[createSandbox] GitHub repository ready for commits after code generation');
-                          
-                          // After successful commit, save app to database
-                          if (commitResult && commitResult.success) {
-                            console.log('[createSandbox] Saving app to database after successful commit');
-                            
-                            // Get current files from sandbox
-                            const currentFiles = await fetchCurrentSandboxFiles();
-                            
-                            // Get GitHub repository URL from the stored info
-                            const githubRepoInfo = (window as any).currentGitHubRepoInfo;
-                            const githubRepoUrl = githubRepoInfo?.url || data.repoUrl;
-                            
-                            console.log('[createSandbox] GitHub repo info for database save:', {
-                              repoName,
-                              githubRepoUrl,
-                              githubRepoInfo
-                            });
-                            
-                            // Save app data
-                            const appId = await saveAppToDatabase({
-                              name: promptInput.substring(0, 50) + (promptInput.length > 50 ? '...' : ''),
-                              description: promptInput,
-                              sandboxId: sandboxData?.sandboxId || '',
-                              githubRepo: repoName,
-                              githubRepoUrl: githubRepoUrl,
-                              prompt: promptInput,
-                              files: currentFiles,
-                              chatHistory: chatMessages,
-                              creditsConsumed: currentGenerationCredits
-                            });
-                            
-                            if (appId) {
-                              console.log('[createSandbox] App saved successfully with ID:', appId);
-                              addChatMessage(`✅ App saved to your collection!`, 'system');
-                            } else {
-                              console.error('[createSandbox] Failed to save app to database');
-                              addChatMessage(`⚠️ App created but failed to save to database`, 'system');
-                            }
-                          }
-                        }, 2000); // Wait 2 more seconds for files to be written
+                    console.log('[createSandbox] GitHub repository created and ready for code commits');
                   } else {
                     console.log('[createSandbox] GitHub repository creation failed');
                     addChatMessage('⚠️ Failed to create GitHub repository', 'system');
