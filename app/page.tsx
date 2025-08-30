@@ -3817,89 +3817,88 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                       });
                       
                       // Validate token usage data - check if it exists and has valid structure
-                      if (!data.tokenUsage || 
-                          typeof data.tokenUsage !== 'object' || 
-                          Object.keys(data.tokenUsage).length === 0 ||
-                          typeof data.tokenUsage.promptTokens !== 'number' || 
-                          typeof data.tokenUsage.completionTokens !== 'number') {
-                        console.warn('[generate-code] Invalid or missing token usage data, using fallback:', data.tokenUsage);
-                        // Instead of throwing error, use fallback estimation
-                        const estimatedTokens = Math.ceil(message.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(message.length / 4) + 800 + 2500) * 0.2);
-                        
-                        const consumeResponse = await fetch('/api/tokens/consume', {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                          },
-                          body: JSON.stringify({
-                            userId: user.uid,
-                            prompt: message,
-                          }),
-                        });
-
-                        const consumeData = await consumeResponse.json();
-
-                        if (consumeData.success) {
-                          setTokenBalance(consumeData.remainingBalance);
-                          addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()} (estimated - no usage data). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
-                        } else {
-                          console.error('Failed to consume estimated tokens:', consumeData.error);
-                          addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
-                        }
-                        return; // Exit early, don't proceed with actual token consumption
-                      }
-                      
-                      const actualTokens = data.tokenUsage.promptTokens + data.tokenUsage.completionTokens;
-                      
-                      console.log('[generate-code] Actual token usage from API:', {
-                        promptTokens: data.tokenUsage.promptTokens,
-                        completionTokens: data.tokenUsage.completionTokens,
-                        totalTokens: actualTokens
-                      });
-                      
-
-                      
-                      // First, commit the generated code to GitHub
-                      console.log('[generate-code] Committing generated code to GitHub before deducting credits...');
+                      // Always commit to GitHub first, regardless of token usage data
+                      console.log('[generate-code] Committing generated code to GitHub before handling credits...');
                       const commitMessage = `CodeBharat.dev: ${message.substring(0, 50)}${message.length > 50 ? '...' : ''}`;
                       const commitResult = await commitSandboxToGitHub(commitMessage);
                       
                       if (commitResult && commitResult.success) {
-                        console.log('[generate-code] Code committed successfully, now deducting credits...');
+                        console.log('[generate-code] Code committed successfully, now handling credits...');
                         
-                        // Only deduct credits after successful commit
-                        const consumeResponse = await fetch('/api/tokens/consume-actual', {
-                          method: 'POST',
-                          headers: {
-                            'Content-Type': 'application/json',
-                          },
-                          body: JSON.stringify({
-                            userId: user.uid,
-                            actualTokens,
-                            description: `AI Code Generation: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`
-                          }),
-                        });
-
-                        const consumeData = await consumeResponse.json();
-
-                        if (consumeData.success) {
-                          // Update token balance
-                          setTokenBalance(consumeData.remainingBalance);
-                          setCurrentGenerationCredits(actualTokens); // Track credits for this generation
+                        // Now handle credit consumption based on available data
+                        if (data.tokenUsage && 
+                            typeof data.tokenUsage === 'object' && 
+                            Object.keys(data.tokenUsage).length > 0 &&
+                            typeof data.tokenUsage.promptTokens === 'number' && 
+                            typeof data.tokenUsage.completionTokens === 'number') {
                           
-                          // Show detailed transparency report
-                          showCreditTransparency(actualTokens, 'AI Code Generation');
+                          // Use actual token usage
+                          const actualTokens = data.tokenUsage.promptTokens + data.tokenUsage.completionTokens;
                           
-                          // Track consumption history for transparency
-                          await trackCreditConsumption('AI Code Generation', actualTokens, {
-                            promptLength: message.length,
-                            model: aiModel,
-                            hasGitHubRepo: !!currentGitHubRepo,
-                            filesGenerated: 0 // Will be updated after file parsing
+                          console.log('[generate-code] Actual token usage from API:', {
+                            promptTokens: data.tokenUsage.promptTokens,
+                            completionTokens: data.tokenUsage.completionTokens,
+                            totalTokens: actualTokens
                           });
+                          
+                          const consumeResponse = await fetch('/api/tokens/consume-actual', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                              userId: user.uid,
+                              actualTokens,
+                              description: `AI Code Generation: "${message.substring(0, 100)}${message.length > 100 ? '...' : ''}"`
+                            }),
+                          });
+
+                          const consumeData = await consumeResponse.json();
+
+                          if (consumeData.success) {
+                            // Update token balance
+                            setTokenBalance(consumeData.remainingBalance);
+                            setCurrentGenerationCredits(actualTokens); // Track credits for this generation
+                            
+                            // Show detailed transparency report
+                            showCreditTransparency(actualTokens, 'AI Code Generation');
+                            
+                            // Track consumption history for transparency
+                            await trackCreditConsumption('AI Code Generation', actualTokens, {
+                              promptLength: message.length,
+                              model: aiModel,
+                              hasGitHubRepo: !!currentGitHubRepo,
+                              filesGenerated: 0 // Will be updated after file parsing
+                            });
+                          } else {
+                            console.error('Failed to consume actual tokens:', consumeData.error);
+                            addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                          }
                         } else {
-                          console.error('Failed to consume actual tokens:', consumeData.error);
-                          addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                          // Fallback to estimated consumption
+                          console.warn('[generate-code] Invalid or missing token usage data, using fallback:', data.tokenUsage);
+                          const estimatedTokens = Math.ceil(message.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(message.length / 4) + 800 + 2500) * 0.2);
+                          
+                          const consumeResponse = await fetch('/api/tokens/consume', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                              userId: user.uid,
+                              prompt: message,
+                            }),
+                          });
+
+                          const consumeData = await consumeResponse.json();
+
+                          if (consumeData.success) {
+                            setTokenBalance(consumeData.remainingBalance);
+                            addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()} (estimated - no usage data). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                          } else {
+                            console.error('Failed to consume estimated tokens:', consumeData.error);
+                            addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                          }
                         }
                       } else {
                         console.error('[generate-code] Failed to commit code to GitHub, not deducting credits');
@@ -4481,82 +4480,81 @@ Tip: I automatically detect and install npm packages from your code imports (lik
                           completionTokensType: typeof data.tokenUsage?.completionTokens
                         });
                         
-                        // Validate token usage data - check if it exists and has valid structure
-                        if (!data.tokenUsage || 
-                            typeof data.tokenUsage !== 'object' || 
-                            Object.keys(data.tokenUsage).length === 0 ||
-                            typeof data.tokenUsage.promptTokens !== 'number' || 
-                            typeof data.tokenUsage.completionTokens !== 'number') {
-                          console.warn('[initial-generation] Invalid or missing token usage data, using fallback:', data.tokenUsage);
-                          // Instead of throwing error, use fallback estimation
-                          const estimatedTokens = Math.ceil(promptInput.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(promptInput.length / 4) + 800 + 2500) * 0.2);
-                          
-                          const consumeResponse = await fetch('/api/tokens/consume', {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                              userId: user.uid,
-                              prompt: promptInput,
-                            }),
-                          });
-
-                          const consumeData = await consumeResponse.json();
-
-                          if (consumeData.success) {
-                            setTokenBalance(consumeData.remainingBalance);
-                            addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()} (estimated - no usage data). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
-                          } else {
-                            console.error('Failed to consume estimated tokens:', consumeData.error);
-                            addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
-                          }
-                          return; // Exit early, don't proceed with actual token consumption
-                        }
-                        
-                        const actualTokens = data.tokenUsage.promptTokens + data.tokenUsage.completionTokens;
-                        
-                        console.log('[initial-generation] Actual token usage from API:', {
-                          promptTokens: data.tokenUsage.promptTokens,
-                          completionTokens: data.tokenUsage.completionTokens,
-                          totalTokens: actualTokens
-                        });
-                        
-                        // First, commit the generated code to GitHub
-                        console.log('[initial-generation] Committing generated code to GitHub before deducting credits...');
+                        // Always commit to GitHub first, regardless of token usage data
+                        console.log('[initial-generation] Committing generated code to GitHub before handling credits...');
                         const commitMessage = `CodeBharat.dev: ${promptInput.substring(0, 50)}${promptInput.length > 50 ? '...' : ''}`;
                         const commitResult = await commitSandboxToGitHub(commitMessage);
                         
                         if (commitResult && commitResult.success) {
-                          console.log('[initial-generation] Code committed successfully, now deducting credits...');
+                          console.log('[initial-generation] Code committed successfully, now handling credits...');
                           
-                          // Only deduct credits after successful commit
-                          const consumeResponse = await fetch('/api/tokens/consume-actual', {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
-                            },
-                            body: JSON.stringify({
-                              userId: user.uid,
-                              actualTokens,
-                              description: `AI Code Generation: "${promptInput.substring(0, 100)}${promptInput.length > 100 ? '...' : ''}"`
-                            }),
-                          });
+                          // Now handle credit consumption based on available data
+                          if (data.tokenUsage && 
+                              typeof data.tokenUsage === 'object' && 
+                              Object.keys(data.tokenUsage).length > 0 &&
+                              typeof data.tokenUsage.promptTokens === 'number' && 
+                              typeof data.tokenUsage.completionTokens === 'number') {
+                            
+                            // Use actual token usage
+                            const actualTokens = data.tokenUsage.promptTokens + data.tokenUsage.completionTokens;
+                            
+                            console.log('[initial-generation] Actual token usage from API:', {
+                              promptTokens: data.tokenUsage.promptTokens,
+                              completionTokens: data.tokenUsage.completionTokens,
+                              totalTokens: actualTokens
+                            });
+                            
+                            const consumeResponse = await fetch('/api/tokens/consume-actual', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                              },
+                              body: JSON.stringify({
+                                userId: user.uid,
+                                actualTokens,
+                                description: `AI Code Generation: "${promptInput.substring(0, 100)}${promptInput.length > 100 ? '...' : ''}"`
+                              }),
+                            });
 
-                          const consumeData = await consumeResponse.json();
+                            const consumeData = await consumeResponse.json();
 
-                          if (consumeData.success) {
-                            // Update token balance
-                            setTokenBalance(consumeData.remainingBalance);
-                            addChatMessage(`💳 AI Credits consumed: ${actualTokens.toLocaleString()} (actual usage). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                            if (consumeData.success) {
+                              setTokenBalance(consumeData.remainingBalance);
+                              addChatMessage(`💳 AI Credits consumed: ${actualTokens.toLocaleString()} (actual usage). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                            } else {
+                              console.error('Failed to consume actual tokens:', consumeData.error);
+                              addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                            }
                           } else {
-                            console.error('Failed to consume actual tokens:', consumeData.error);
-                            addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                            // Fallback to estimated consumption
+                            console.warn('[initial-generation] Invalid or missing token usage data, using fallback:', data.tokenUsage);
+                            const estimatedTokens = Math.ceil(promptInput.length / 4) + 800 + 2500 + Math.ceil((Math.ceil(promptInput.length / 4) + 800 + 2500) * 0.2);
+                            
+                            const consumeResponse = await fetch('/api/tokens/consume', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                              },
+                              body: JSON.stringify({
+                                userId: user.uid,
+                                prompt: promptInput,
+                              }),
+                            });
+
+                            const consumeData = await consumeResponse.json();
+
+                            if (consumeData.success) {
+                              setTokenBalance(consumeData.remainingBalance);
+                              addChatMessage(`💳 AI Credits consumed: ${consumeData.tokensConsumed.toLocaleString()} (estimated - no usage data). Remaining: ${consumeData.remainingBalance.toLocaleString()}`, 'system');
+                            } else {
+                              console.error('Failed to consume estimated tokens:', consumeData.error);
+                              addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
+                            }
                           }
-                                                 } else {
-                           console.error('[initial-generation] Failed to commit code to GitHub, not deducting credits');
-                           addChatMessage(`❌ Failed to commit code to GitHub. Credits not deducted.`, 'system');
-                         }
+                        } else {
+                          console.error('[initial-generation] Failed to commit code to GitHub, not deducting credits');
+                          addChatMessage(`❌ Failed to commit code to GitHub. Credits not deducted.`, 'system');
+                        }
                        } catch (error) {
                         console.error('Error consuming actual tokens:', error);
                         addChatMessage(`⚠️ Warning: Failed to consume credits after successful generation`, 'system');
